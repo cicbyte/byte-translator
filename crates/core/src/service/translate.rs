@@ -55,11 +55,12 @@ impl TranslateService {
     pub fn production(db: Arc<Database>) -> Self {
         let providers = ProviderService::new(db.clone());
         let dict_db = db.clone();
-        let key = std::env::var("ICIBA_API_KEY").ok().filter(|k| !k.trim().is_empty());
         Self {
+            // Key 在工厂内现读环境变量：运行期可更新（桌面设置页改 Key 即时生效）
             dictionary_factory: Some(Arc::new(move || {
+                let key = std::env::var("ICIBA_API_KEY").ok().filter(|k| !k.trim().is_empty());
                 Box::new(CachedTranslator::new(
-                    Box::new(IcibaTranslator::new(key.clone())),
+                    Box::new(IcibaTranslator::new(key)),
                     dict_db.clone(),
                 ))
             })),

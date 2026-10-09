@@ -49,6 +49,7 @@ fn escape_like(kw: &str) -> String {
     out
 }
 
+#[derive(Clone)]
 pub struct HistoryService {
     db: Arc<Database>,
 }

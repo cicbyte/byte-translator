@@ -229,6 +229,18 @@ pub async fn serve(
         .await
         .with_context(|| format!("绑定 {bind} 失败（端口被占用？）"))?;
     tracing::info!(%bind, "REST 服务已绑定");
+    serve_listener(listener, cfg, svc, key, shutdown).await
+}
+
+/// 运行段（listener 已由调用方 bind 好）——桌面端 bind 前移后传入，
+/// bind 失败立即 Err 而非 spawn 内静默退出的「假运行」
+pub async fn serve_listener(
+    listener: tokio::net::TcpListener,
+    cfg: &ServeConfig,
+    svc: Arc<RestServices>,
+    key: SharedKey,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<()> {
     let state = ApiState {
         svc,
         api_key: key,
