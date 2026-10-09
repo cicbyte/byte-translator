@@ -37,6 +37,8 @@ pub struct ProviderBody {
     pub max_tokens: i64,
     #[serde(default = "default_temperature")]
     pub temperature: f64,
+    #[serde(default)]
+    pub models: Option<Vec<String>>,
     /// 同时设置启用状态（true 时独占启用位）
     #[serde(default)]
     pub enable: Option<bool>,
@@ -59,6 +61,7 @@ pub async fn upsert(State(state): State<ApiState>, Json(body): Json<ProviderBody
         model: body.model,
         max_tokens: body.max_tokens,
         temperature: body.temperature,
+        models: body.models.unwrap_or_default(),
     };
     let result = state
         .svc

@@ -57,6 +57,8 @@ pub struct ProviderConfig {
     pub model: String,
     pub max_tokens: i64,
     pub temperature: f64,
+    /// 可用模型列表（JSON 字符串数组；详情页模型管理用）
+    pub models: Vec<String>,
 }
 
 /// 归一化供应商 base_url 为「协议根」：
@@ -199,6 +201,40 @@ pub async fn complete_stream(
         }
     }
     Ok(full)
+}
+
+/// 拉取供应商可用模型列表（不耗 token）：OpenAI 兼容 GET /v1/models；
+/// Ollama 走 /api/tags（字段名 models[].name）
+pub async fn fetch_models(cfg: &ProviderConfig) -> Result<Vec<String>> {
+    let base = normalize_base_url(&cfg.base_url);
+    let (url, is_ollama) = match Protocol::parse(&cfg.provider_key) {
+        Protocol::Ollama => (format!("{base}/api/tags"), true),
+        _ => (format!("{base}/v1/models"), false),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()?;
+    let mut req = client.get(&url);
+    if !cfg.api_key.is_empty() {
+        req = req.bearer_auth(&cfg.api_key);
+    }
+    let resp = req.send().await.map_err(|e| anyhow!("连接失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(anyhow!("服务返回 {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| anyhow!("响应解析失败: {e}"))?;
+    let ids: Vec<String> = if is_ollama {
+        v["models"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|m| m["name"].as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    } else {
+        v["data"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|m| m["id"].as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+    Ok(ids)
 }
 
 /// 连通测试（轻量探测，不耗 token）：OpenAI 兼容端点 GET /models

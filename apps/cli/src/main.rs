@@ -439,6 +439,7 @@ async fn provider_cmd(cli: &Cli, be: &Backend, cmd: &ProviderCmd) -> Result<()> 
                 model: model.clone().unwrap_or_default(),
                 max_tokens: 4096,
                 temperature: 0.3,
+                models: Vec::new(),
             };
             let v = be.provider_set(&input, Some(*enable)).await?;
             emit(cli, format!("已保存供应商 {key}"), v);

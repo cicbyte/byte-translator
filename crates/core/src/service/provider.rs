@@ -24,6 +24,8 @@ pub struct ProviderView {
     pub is_enabled: bool,
     /// Key 是否已配置（不回显内容）
     pub api_key_set: bool,
+    /// 可用模型列表
+    pub models: Vec<String>,
 }
 
 /// 新增/更新输入；provider_key 唯一，api_key 留空表示保持原值（更新时）
@@ -36,6 +38,7 @@ pub struct ProviderInput {
     pub model: String,
     pub max_tokens: i64,
     pub temperature: f64,
+    pub models: Vec<String>,
 }
 
 impl Default for ProviderInput {
@@ -48,6 +51,7 @@ impl Default for ProviderInput {
             model: String::new(),
             max_tokens: 4096,
             temperature: 0.3,
+            models: Vec::new(),
         }
     }
 }
@@ -66,7 +70,7 @@ impl ProviderService {
         let conn = self.db.lock().map_err(|_| anyhow!("数据库锁中毒"))?;
         let mut stmt = conn.prepare(
             "SELECT id, name, provider_key, base_url, model, max_tokens, temperature, \
-             is_enabled, (api_key != '') FROM ai_providers \
+             is_enabled, (api_key != ''), models FROM ai_providers \
              ORDER BY sort_order ASC, id ASC",
         )?;
         let rows = stmt
@@ -81,6 +85,7 @@ impl ProviderService {
                     temperature: r.get(6)?,
                     is_enabled: r.get::<_, i64>(7)? != 0,
                     api_key_set: r.get::<_, i64>(8)? != 0,
+                    models: parse_models(&r.get::<_, String>(9)?),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -109,7 +114,7 @@ impl ProviderService {
                 conn.execute(
                     "UPDATE ai_providers SET name=?2, base_url=?3, \
                      api_key=CASE WHEN ?4='' THEN api_key ELSE ?4 END, model=?5, \
-                     max_tokens=?6, temperature=?7, updated_at=CURRENT_TIMESTAMP \
+                     max_tokens=?6, temperature=?7, models=?8, updated_at=CURRENT_TIMESTAMP \
                      WHERE id=?1",
                     rusqlite::params![
                         id,
@@ -118,14 +123,15 @@ impl ProviderService {
                         input.api_key,
                         input.model,
                         input.max_tokens,
-                        input.temperature
+                        input.temperature,
+                        serde_json::to_string(&input.models).unwrap_or_else(|_| "[]".into()),
                     ],
                 )?;
             }
             None => {
                 conn.execute(
                     "INSERT INTO ai_providers (name, provider_key, base_url, api_key, model, \
-                     max_tokens, temperature) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     max_tokens, temperature, models) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     rusqlite::params![
                         input.name,
                         input.provider_key,
@@ -133,7 +139,8 @@ impl ProviderService {
                         input.api_key,
                         input.model,
                         input.max_tokens,
-                        input.temperature
+                        input.temperature,
+                        serde_json::to_string(&input.models).unwrap_or_else(|_| "[]".into()),
                     ],
                 )?;
             }
@@ -179,7 +186,7 @@ impl ProviderService {
     pub fn enabled_config(&self) -> Result<ProviderConfig> {
         let conn = self.db.lock().map_err(|_| anyhow!("数据库锁中毒"))?;
         let row = conn.query_row(
-            "SELECT provider_key, base_url, api_key, model, max_tokens, temperature \
+            "SELECT provider_key, base_url, api_key, model, max_tokens, temperature, models \
              FROM ai_providers WHERE is_enabled=1 ORDER BY sort_order ASC, id ASC LIMIT 1",
             [],
             |r| {
@@ -190,6 +197,7 @@ impl ProviderService {
                     model: r.get(3)?,
                     max_tokens: r.get(4)?,
                     temperature: r.get(5)?,
+                    models: parse_models(&r.get::<_, String>(6)?),
                 })
             },
         );
@@ -207,7 +215,7 @@ impl ProviderService {
         let cfg = {
             let conn = self.db.lock().map_err(|_| anyhow!("数据库锁中毒"))?;
             conn.query_row(
-                "SELECT provider_key, base_url, api_key, model, max_tokens, temperature \
+                "SELECT provider_key, base_url, api_key, model, max_tokens, temperature, models \
                  FROM ai_providers WHERE provider_key=?1",
                 rusqlite::params![provider_key],
                 |r| {
@@ -218,12 +226,46 @@ impl ProviderService {
                         model: r.get(3)?,
                         max_tokens: r.get(4)?,
                         temperature: r.get(5)?,
+                        models: parse_models(&r.get::<_, String>(6)?),
                     })
                 },
             )
             .map_err(|_| anyhow!("供应商不存在: {provider_key}"))?
         };
         probe(&cfg).await
+    }
+}
+
+
+/// models 列 JSON 解析（坏值容错为空）
+fn parse_models(json: &str) -> Vec<String> {
+    serde_json::from_str(json).unwrap_or_default()
+}
+
+impl ProviderService {
+    /// 拉取供应商可用模型列表（GET /v1/models 或 Ollama /api/tags，不耗 token）
+    pub async fn fetch_models(&self, provider_key: &str) -> Result<Vec<String>> {
+        let cfg = {
+            let conn = self.db.lock().map_err(|_| anyhow!("数据库锁中毒"))?;
+            conn.query_row(
+                "SELECT provider_key, base_url, api_key, model, max_tokens, temperature, models \
+                 FROM ai_providers WHERE provider_key=?1",
+                rusqlite::params![provider_key],
+                |r| {
+                    Ok(ProviderConfig {
+                        provider_key: r.get(0)?,
+                        base_url: r.get(1)?,
+                        api_key: r.get(2)?,
+                        model: r.get(3)?,
+                        max_tokens: r.get(4)?,
+                        temperature: r.get(5)?,
+                        models: parse_models(&r.get::<_, String>(6)?),
+                    })
+                },
+            )
+            .map_err(|_| anyhow!("供应商不存在: {provider_key}"))?
+        };
+        crate::ai::fetch_models(&cfg).await
     }
 }
 
@@ -245,6 +287,7 @@ mod tests {
             base_url: "https://api.example.com".into(),
             api_key: "sk-test".into(),
             model: "m1".into(),
+            models: vec!["m1".into(), "m2".into()],
             ..Default::default()
         }
     }

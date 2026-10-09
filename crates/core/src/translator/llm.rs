@@ -94,6 +94,7 @@ mod tests {
             model: String::new(),
             max_tokens: 0,
             temperature: 0.3,
+            models: Vec::new(),
         });
         assert!(t.supports("ja", "fr"));
         assert_eq!(t.kind(), EngineKind::Text);

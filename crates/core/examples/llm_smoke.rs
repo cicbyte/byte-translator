@@ -15,6 +15,7 @@ async fn main() -> anyhow::Result<()> {
         model: std::env::var("LLM_MODEL").unwrap_or_default(),
         max_tokens: 0,
         temperature: 0.3,
+        models: Vec::new(),
     };
     let engine = LlmTranslator::new(provider);
     let result = engine
