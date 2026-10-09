@@ -1,0 +1,13 @@
+[project]
+name = "btr-e2e"
+version = "0.1.0"
+description = "btr CLI 端到端测试（pytest + YAML 用例）"
+requires-python = ">=3.10"
+dependencies = [
+    "pytest>=8",
+    "pyyaml>=6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]

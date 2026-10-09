@@ -1,0 +1,45 @@
+# 供应商：配置 / 脱敏 / 启用单选 / 删除 / 连通测试失败路径
+flows:
+  - name: provider set 与 Key 不回显
+    steps:
+      - run: ["provider", "set", "deepseek", "--base-url", "https://api.deepseek.com", "--api-key", "sk-e2e-placeholder", "--model", "deepseek-chat", "--enable"]
+        contains: ["已保存"]
+      - run: ["provider", "list"]
+        contains: ["deepseek"]
+      - run: ["provider", "list", "--json"]
+        expect_json:
+          list:
+            - provider_key: deepseek
+              api_key_set: true
+              is_enabled: true
+        not_contains: ["sk-e2e-placeholder"]
+
+  - name: provider 启用单选
+    steps:
+      - run: ["provider", "set", "deepseek", "--base-url", "https://a.example.com", "--enable"]
+      - run: ["provider", "set", "zhipu", "--base-url", "https://b.example.com", "--enable"]
+      - run: ["provider", "list", "--json"]
+        expect_json:
+          list:
+            - provider_key: deepseek
+              is_enabled: false
+            - provider_key: zhipu
+              is_enabled: true
+
+  - name: provider 连接失败快速路径（保留端口连接拒绝）
+    steps:
+      - run: ["provider", "set", "local", "--base-url", "http://127.0.0.1:1"]
+      - run: ["provider", "test", "local"]
+        exit: 1
+
+  - name: provider 删除与不存在
+    steps:
+      - run: ["provider", "delete", "nope"]
+        exit: 1
+        contains: ["不存在"]
+
+  - name: 空列表契约
+    steps:
+      - run: ["provider", "list", "--json"]
+        expect_json:
+          list: []

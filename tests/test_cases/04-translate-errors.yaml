@@ -1,0 +1,43 @@
+# 翻译错误路径与 --json 契约（无网络依赖的确定性分支）
+flows:
+  - name: 显式 iciba 未命中返回 JSON 错误契约
+    steps:
+      - run: ["-e", "iciba", "asdfqwerzxcv"]
+        exit: 1
+        expect_json:
+          ok: false
+
+  - name: 自动调度降级链（词典未命中 + 无供应商）合并错误与指引
+    steps:
+      - run: ["asdfqwerzxcv"]
+        exit: 1
+        expect_json:
+          ok: false
+        contains: ["词典未命中", "供应商"]
+
+  - name: 未知引擎报错
+    steps:
+      - run: ["-e", "baidu", "hello"]
+        exit: 1
+        contains: ["不支持的引擎"]
+
+  - name: 非中英语言对（无供应商时 LLM 失败路径）
+    steps:
+      - run: ["--from", "ja", "--to", "en", "こんにちは"]
+        exit: 1
+        expect_json:
+          ok: false
+        contains: ["供应商"]
+
+  - name: 显式 iciba 非中英语言对不降级
+    steps:
+      - run: ["-e", "iciba", "--from", "ja", "--to", "en", "こんにちは"]
+        exit: 1
+        contains: ["仅支持中英互译"]
+
+  - name: stdin 输入空文本报错
+    steps:
+      - run: []
+        stdin: "   \n "
+        exit: 1
+        contains: ["未提供文本"]

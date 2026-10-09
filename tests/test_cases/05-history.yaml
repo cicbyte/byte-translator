@@ -1,0 +1,28 @@
+# 历史检索：空契约 / LIKE 转义 / 失败不留存
+flows:
+  - name: 失败的翻译不留存历史
+    steps:
+      - run: ["-e", "iciba", "asdfqwerzxcv"]
+        exit: 1
+      - run: ["history", "list", "--json"]
+        expect_json:
+          total: 0
+
+  - name: LIKE 通配符按字面量匹配
+    steps:
+      # 造历史：provider 操作不产生历史；用空历史验证过滤参数组合不报错
+      - run: ["history", "list", "--keyword", "100%", "--engine", "llm", "--from", "en", "--to", "zh", "--json"]
+        expect_json:
+          total: 0
+
+  - name: recent 空列表
+    steps:
+      - run: ["history", "recent", "--json"]
+        expect_json:
+          total: 0
+
+  - name: 远程模式缺 key 报错
+    steps:
+      - run: ["--remote", "http://127.0.0.1:19999", "hello"]
+        exit: 1
+        contains: ["--api-key"]

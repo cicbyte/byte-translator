@@ -1,0 +1,43 @@
+# 生词本：收藏幂等 / 列表过滤 / 删除
+flows:
+  - name: wordbook 收藏与幂等更新
+    steps:
+      - run: ["wordbook", "add", "serendipity", "--note", "n. 意外发现美好事物的能力"]
+        exit: 0
+        contains: ["已收藏"]
+      - run: ["wordbook", "add", "serendipity", "--note", "v2 备注"]
+        exit: 0
+      - run: ["wordbook", "list"]
+        exit: 0
+        contains: ["serendipity", "v2 备注"]
+        save: { first_id: "list.0.id" }
+
+  - name: wordbook 列表 JSON 契约与关键词过滤
+    steps:
+      - run: ["wordbook", "add", "love"]
+      - run: ["wordbook", "add", "beloved"]
+      - run: ["wordbook", "add", "你好"]
+      - run: ["wordbook", "list", "--keyword", "love", "--json"]
+        expect_json:
+          total: 2
+      - run: ["wordbook", "list", "--json"]
+        expect_json:
+          total: 3
+
+  - name: wordbook 删除与重复删除报错
+    steps:
+      - run: ["wordbook", "add", "ephemeral"]
+      - run: ["wordbook", "list", "--json"]
+        save: { id: "list.0.id" }
+      - run: ["wordbook", "remove", "${id}"]
+        exit: 0
+        contains: ["已删除"]
+      - run: ["wordbook", "remove", "${id}"]
+        exit: 1
+        contains: ["不存在"]
+
+  - name: wordbook 空词条拒绝
+    steps:
+      - run: ["wordbook", "add", "  "]
+        exit: 1
+        contains: ["不能为空"]

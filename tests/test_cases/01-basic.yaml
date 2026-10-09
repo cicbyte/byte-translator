@@ -1,0 +1,43 @@
+# 基础：帮助 / 版本 / 引擎列表（无数据依赖）
+flows:
+  - name: help 一页式总览
+    steps:
+      - run: ["--help"]
+        exit: 0
+        contains:
+          - "翻译"
+          - "wordbook"
+          - "provider"
+          - "serve"
+          - "mcp"
+          - "--json"
+          - "--remote"
+
+  - name: version 输出
+    steps:
+      - run: ["--version"]
+        exit: 0
+        contains: ["0.1.0"]
+
+  - name: 二级帮助 wordbook
+    steps:
+      - run: ["wordbook", "--help"]
+        exit: 0
+        contains: ["add", "list", "remove"]
+
+  - name: 二级帮助 provider
+    steps:
+      - run: ["provider", "--help"]
+        exit: 0
+        contains: ["list", "set", "enable", "disable", "test", "delete"]
+
+  - name: engine 列表
+    steps:
+      - run: ["engine"]
+        exit: 0
+        contains: ["iciba", "llm"]
+      - run: ["engine", "--json"]
+        exit: 0
+        expect_json:
+          - engine: iciba
+          - engine: llm
