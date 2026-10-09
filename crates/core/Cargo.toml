@@ -1,0 +1,44 @@
+[package]
+name = "byte-translator-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "byte-translator 领域层——翻译引擎、调度与本地数据（CLI 与桌面端共用，无 UI 依赖）"
+
+[lib]
+name = "byte_translator_core"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+dirs = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+rig-core = { workspace = true }
+futures = { workspace = true }
+async-trait = "0.1"
+roxmltree = "0.20"
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+# === REST API 服务（btr serve；feature 关闭零增量）===
+axum = { version = "0.8", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
+# === MCP 服务器（btr mcp；复用 server feature 的 axum 与鉴权）===
+rmcp = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+
+[features]
+server = ["dep:axum", "dep:uuid", "dep:tokio-stream"]
+mcp = ["dep:rmcp", "dep:schemars", "dep:tokio-util", "server"]
+
+[dev-dependencies]
+tempfile = "3"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

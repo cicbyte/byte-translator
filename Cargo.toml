@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "apps/cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["cicbyte"]
+license = "MIT"
+repository = "https://github.com/cicbyte/byte-translator"
+
+[workspace.dependencies]
+# === 序列化 ===
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# === 网络（rustls，不依赖系统 OpenSSL）===
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking", "stream"] }
+# === AI 接入框架（多供应商统一抽象；derive 宏用不到，禁省体积）===
+rig-core = { version = "0.44", default-features = false, features = ["reqwest", "rustls"] }
+futures = "0.3"
+# === MCP（btr mcp；复用 server feature 的 axum）===
+rmcp = { version = "2.2", features = ["server", "macros", "transport-io", "transport-streamable-http-server", "schemars"] }
+schemars = "1"
+tokio-util = { version = "0.7", features = ["rt"] }
+# === 异步运行时 ===
+tokio = { version = "1", features = ["full"] }
+# === CLI ===
+clap = { version = "4", features = ["derive"] }
+# === 日志 ===
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# === 错误处理 ===
+anyhow = "1"
+dirs = "5"
+
+# release 体积优先
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

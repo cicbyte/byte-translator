@@ -27,6 +27,8 @@ rustc-ice-*.txt
 .zcode/
 .scratch/
 
+.local/
+
 # PRD 及开发文档（不随版本管理）
 dev-docs/
 
@@ -71,7 +73,6 @@ develop-eggs/
 downloads/
 eggs/
 .eggs/
-# lib/  # 已移除：Python venv 的 lib 已被 .venv/ 与 venv/ 覆盖；此宽泛规则误伤前端 src/**/lib/ 源码目录
 lib64/
 parts/
 sdist/
