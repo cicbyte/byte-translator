@@ -22,7 +22,7 @@ pub mod mcp;
 /// 数据根目录覆盖用的环境变量名
 pub const HOME_ENV: &str = "CICBYTE_HOME";
 
-/// 解析应用数据根目录：优先环境变量覆盖，否则 `~/.cicbyte/byte-translator`
+/// 解析应用数据根目录：优先环境变量覆盖，否则 `~/.cicbyte/apps/byte-translator`
 pub fn resolve_app_root() -> Result<PathBuf> {
     resolve_root_from(std::env::var(HOME_ENV).ok(), dirs::home_dir())
 }
@@ -35,7 +35,7 @@ fn resolve_root_from(env_override: Option<String>, home: Option<PathBuf>) -> Res
         }
     }
     let home = home.ok_or_else(|| anyhow::anyhow!("无法定位用户主目录"))?;
-    Ok(home.join(".cicbyte").join("byte-translator"))
+    Ok(home.join(".cicbyte").join("apps").join("byte-translator"))
 }
 
 /// 初始化日志：stderr 输出，级别由 RUST_LOG 过滤（缺省 info）。
@@ -67,17 +67,18 @@ mod tests {
     #[test]
     fn blank_env_falls_back_to_home() {
         let root = resolve_root_from(Some("  ".into()), home()).unwrap();
-        assert_eq!(root, PathBuf::from("/home tester/.cicbyte/byte-translator"));
+        assert_eq!(root, PathBuf::from("/home tester/.cicbyte/apps/byte-translator"));
     }
 
     #[test]
-    fn default_root_under_cicbyte() {
+    fn default_root_under_cicbyte_apps() {
         let root = resolve_root_from(None, home()).unwrap();
-        assert_eq!(root, PathBuf::from("/home tester/.cicbyte/byte-translator"));
+        assert_eq!(root, PathBuf::from("/home tester/.cicbyte/apps/byte-translator"));
     }
 
     #[test]
     fn missing_home_is_error() {
         assert!(resolve_root_from(None, None).is_err());
     }
+
 }

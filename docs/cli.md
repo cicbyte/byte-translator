@@ -5,7 +5,7 @@
 | 参数 | 说明 |
 |------|------|
 | `--json` | 结构化输出（AI/脚本消费的稳定契约；错误输出 `{"ok":false,"error":...}` 且退出码 1） |
-| `--app-root <DIR>` | 覆盖数据目录（默认 `~/.cicbyte/byte-translator`；`CICBYTE_HOME` 环境变量等价） |
+| `--app-root <DIR>` | 覆盖数据目录（默认 `~/.cicbyte/apps/byte-translator`；`CICBYTE_HOME` 环境变量等价） |
 | `--remote <URL>` | 远程模式：直连 `btr serve` 端点（`BTR_REMOTE` 环境变量） |
 | `--api-key <KEY>` | 远程模式 Key（`BTR_API_KEY` 环境变量） |
 
@@ -70,7 +70,7 @@ btr engine [--json]
 ## 数据布局
 
 ```
-~/.cicbyte/byte-translator/
+~/.cicbyte/apps/byte-translator/
 ├── data/
 │   ├── db/byte-translator.db    # SQLite（WAL）：历史/生词本/供应商/词典缓存
 │   └── config/api.json          # REST 与 MCP 两把独立 Key（原子写、可轮换）

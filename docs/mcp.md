@@ -33,7 +33,7 @@
 
 说明：
 
-- `args` 里可加 `--app-root <DIR>` 指定数据目录（不配则用 `~/.cicbyte/byte-translator`）
+- `args` 里可加 `--app-root <DIR>` 指定数据目录（不配则用 `~/.cicbyte/apps/byte-translator`）
 - 需要词典型翻译效果时，可在 `env` 中配 `ICIBA_API_KEY`（到 open.iciba.com 免费申请；不配时词典未命中会自动走 LLM）
 - LLM 引擎需要先在任意终端执行一次 `btr provider set ... --enable`（供应商配置存于共享数据目录）
 
