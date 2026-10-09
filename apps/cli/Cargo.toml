@@ -1,0 +1,21 @@
+[package]
+name = "byte-translator-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "btr——byte-translator 命令行"
+
+[[bin]]
+name = "btr"
+path = "src/main.rs"
+
+[dependencies]
+byte-translator-core = { path = "../../crates/core", features = ["server", "mcp"] }
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true, features = ["env"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
