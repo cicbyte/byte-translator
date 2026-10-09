@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 编译检查（全 workspace，含 server/mcp feature）
+        run: cargo check --workspace --all-features
+      - name: 单元测试
+        run: cargo test --workspace
+      - name: CLI 端到端
+        run: |
+          pip install pytest pyyaml
+          cd tests && python -m pytest -q
