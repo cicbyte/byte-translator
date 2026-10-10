@@ -1,0 +1,251 @@
+/* 全局基础样式：只放与明暗无关的尺寸/间距/圆角/过渡变量 + reset；
+ * 色彩变量一律由 themes/ 按预设与明暗态注入派生。 */
+
+:root {
+  /* 布局尺寸 */
+  --navbar-height: 45px;
+  --sidebar-width: 60px;
+  --sidebar-width-expanded: 200px;
+
+  /* 间距阶梯（4/8/16/24/32） */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  /* 圆角 */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* 过渡 */
+  --transition-fast: 120ms ease;
+  --transition-normal: 200ms ease;
+
+  /* ===== 派生层：bg 系消费 -orig（由 themes/ 按预设注入原始色） ===== */
+  --bg-base: var(--bg-base-orig);
+  --bg-surface: var(--bg-surface-orig);
+  --bg-input: var(--bg-input-orig);
+  --bg-elevated: var(--bg-elevated-orig);
+
+  /* 未注入前的兜底（暗色）：防 FOUC 白闪 */
+  --bg-base-orig: #15171d;
+  --bg-surface-orig: #1e2129;
+  --bg-input-orig: #282c36;
+  --bg-elevated-orig: #232730;
+  --color-primary: #8ca3cc;
+  --text-primary: #e9ebf0;
+  --text-secondary: #a0a6b3;
+  --text-tertiary: #707583;
+  --border-base: #343945;
+  --border-light: #282c36;
+  --color-primary-rgb: 140, 163, 204;
+  --hero-cta-text: #1b1c1f;
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -16px rgba(0, 0, 0, 0.55);
+  --shadow-panel-breathe: 0 2px 5px rgba(0, 0, 0, 0.45), 0 18px 42px -16px rgba(0, 0, 0, 0.7);
+  --shadow-panel-hover: 0 1px 2px rgba(0, 0, 0, 0.5), 0 14px 38px -12px rgba(0, 0, 0, 0.65);
+  --color-nav-hover: rgba(255, 255, 255, 0.05);
+  --color-nav-active: rgba(255, 255, 255, 0.09);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* 细化滚动条（WebView2/Chromium） */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.55);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+body {
+  font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+::selection {
+  background: rgba(96, 165, 250, 0.3);
+}
+
+/* ============ Ant Design 全局主题覆盖 ============
+ * ConfigProvider 在主题切换时 CSS-in-JS 不完整更新，且命令式 API 不走
+ * 组件 context。统一用 CSS 变量覆盖 antd 组件色彩，确保跟随主题令牌。
+ */
+
+/* --- 输入框/选择器：统一 bg-input 底色 + 去 focus 蓝晕与 box-shadow --- */
+.ant-input:not(.ant-input-borderless),
+.ant-input:focus:not(.ant-input-borderless),
+.ant-input-focused:not(.ant-input-borderless),
+.ant-input-affix-wrapper,
+.ant-input-affix-wrapper:focus,
+.ant-input-affix-wrapper-focused,
+.ant-select .ant-select-selector,
+.ant-select-focused .ant-select-selector,
+.ant-input-number,
+textarea.ant-input:not(.ant-input-borderless),
+textarea.ant-input:focus:not(.ant-input-borderless) {
+  border-color: var(--border-base) !important;
+  box-shadow: none !important;
+}
+.ant-input:not(.ant-input-borderless),
+.ant-input-affix-wrapper,
+.ant-input-number,
+.ant-select .ant-select-selector {
+  background-color: var(--bg-input) !important;
+  color: var(--text-primary) !important;
+}
+
+/* --- 下拉菜单 --- */
+.ant-dropdown-menu,
+.ant-select-dropdown {
+  background-color: var(--bg-elevated) !important;
+}
+.ant-dropdown-menu-item,
+.ant-select-item {
+  color: var(--text-secondary) !important;
+}
+.ant-dropdown-menu-item:hover,
+.ant-select-item-option-active {
+  background-color: var(--bg-input) !important;
+}
+.ant-dropdown-menu-item-selected,
+.ant-select-item-option-selected {
+  color: var(--color-primary) !important;
+  font-weight: 600;
+}
+.ant-dropdown-menu-item-danger {
+  color: var(--color-danger) !important;
+}
+
+/* --- 弹窗 --- */
+.ant-modal-content,
+.ant-modal-header {
+  background-color: var(--bg-elevated) !important;
+}
+.ant-modal-title,
+.ant-modal-close-icon {
+  color: var(--text-primary) !important;
+}
+.ant-modal-content {
+  border: 1px solid var(--border-base);
+}
+.ant-modal-footer {
+  border-top: 1px solid var(--border-light);
+  padding-block: 12px;
+}
+
+/* --- 标签 / 按钮 / 分页 / 表格 / 提示 --- */
+.ant-tag {
+  background-color: var(--bg-input) !important;
+  border-color: var(--border-light) !important;
+  color: var(--text-secondary) !important;
+}
+.ant-btn-default {
+  background-color: var(--bg-input) !important;
+  border-color: var(--border-base) !important;
+  color: var(--text-secondary) !important;
+}
+.ant-btn-default:hover {
+  border-color: var(--color-primary) !important;
+  color: var(--color-primary) !important;
+}
+.ant-tooltip-inner {
+  background-color: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+}
+.ant-table {
+  background-color: var(--bg-surface) !important;
+  color: var(--text-primary) !important;
+}
+.ant-table-thead > tr > th {
+  background-color: var(--bg-elevated) !important;
+  border-color: var(--border-light) !important;
+  color: var(--text-secondary) !important;
+  font-weight: 500 !important;
+}
+.ant-table-tbody > tr > td {
+  border-color: var(--border-light) !important;
+}
+.ant-table-tbody > tr:hover > td {
+  background-color: var(--bg-elevated) !important;
+}
+.ant-divider {
+  border-color: var(--border-light) !important;
+}
+.ant-empty-description {
+  color: var(--text-tertiary) !important;
+}
+.ant-switch:not(.ant-switch-checked) {
+  background-color: var(--bg-elevated) !important;
+}
+.ant-pagination .ant-pagination-item a {
+  color: var(--text-secondary);
+}
+.ant-pagination .ant-pagination-item-active {
+  border-color: var(--color-primary);
+}
+.ant-pagination .ant-pagination-item-active a {
+  color: var(--color-primary);
+}
+
+/* --- 消息/通知命令式 API 跟随主题 --- */
+.ant-message-notice-content,
+.ant-notification-notice {
+  background-color: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-light);
+}
+
+/* ===== 页面容器通用模式 ===== */
+.page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 28px;
+  gap: 14px;
+  overflow: hidden;
+}
+.page-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.page-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
