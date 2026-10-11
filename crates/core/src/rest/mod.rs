@@ -45,15 +45,20 @@ pub struct RestServices {
     pub history: HistoryService,
     pub wordbook: WordbookService,
     pub providers: ProviderService,
+    pub config: crate::service::config::ConfigService,
 }
 
 impl RestServices {
     pub fn new(db: Arc<Database>) -> Self {
+        let config = crate::service::config::ConfigService::new(db.clone());
+        // 启动注入引擎配置（iciba Key：环境变量优先）
+        let _ = config.apply_iciba_key();
         Self {
             translate: TranslateService::production(db.clone()),
             history: HistoryService::new(db.clone()),
             wordbook: WordbookService::new(db.clone()),
             providers: ProviderService::new(db),
+            config,
         }
     }
 }

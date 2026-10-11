@@ -20,12 +20,14 @@ use rusqlite::Connection;
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 /// v2：供应商模型列表
 const V2_SQL: &str = include_str!("migration_v2.sql");
+/// v3：KV 配置表
+const V3_SQL: &str = include_str!("migration_v3.sql");
 
 /// 版本化迁移表：后续 schema 演进在此追加 (版本号, 迁移 SQL)。
-const MIGRATIONS: &[(i64, &str)] = &[(1, SCHEMA_SQL), (2, V2_SQL)];
+const MIGRATIONS: &[(i64, &str)] = &[(1, SCHEMA_SQL), (2, V2_SQL), (3, V3_SQL)];
 
 /// 当前 schema 目标版本（MIGRATIONS 最大版本）
-const LATEST_VERSION: i64 = 2;
+const LATEST_VERSION: i64 = 3;
 
 /// 数据库句柄：持 Mutex<Connection>，单连接串行化（避免 SQLite 写锁竞争）
 pub struct Database {

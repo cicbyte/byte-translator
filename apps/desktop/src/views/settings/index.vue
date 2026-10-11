@@ -5,12 +5,14 @@
  */
 import { ref } from "vue";
 import {
+  TranslationOutlined,
   CloudOutlined,
   DatabaseOutlined,
   SettingOutlined,
   BgColorsOutlined,
   InfoCircleOutlined,
 } from "@ant-design/icons-vue";
+import EnginesSection from "./components/EnginesSection.vue";
 import ProviderSection from "./components/ProviderSection.vue";
 import StorageSection from "./components/StorageSection.vue";
 import PreferencesSection from "./components/PreferencesSection.vue";
@@ -18,13 +20,14 @@ import AppearanceSection from "./components/AppearanceSection.vue";
 import AboutSection from "./components/AboutSection.vue";
 
 const tabs = [
+  { key: "engines", icon: TranslationOutlined, label: "翻译引擎" },
   { key: "providers", icon: CloudOutlined, label: "AI 供应商" },
   { key: "storage", icon: DatabaseOutlined, label: "数据" },
   { key: "preferences", icon: SettingOutlined, label: "偏好" },
   { key: "appearance", icon: BgColorsOutlined, label: "外观" },
   { key: "about", icon: InfoCircleOutlined, label: "关于" },
 ];
-const activeTab = ref("providers");
+const activeTab = ref("engines");
 </script>
 
 <template>
@@ -44,7 +47,8 @@ const activeTab = ref("providers");
 
     <!-- 右：分区内容 -->
     <div class="settings-content">
-      <ProviderSection v-if="activeTab === 'providers'" />
+      <EnginesSection v-if="activeTab === 'engines'" />
+      <ProviderSection v-else-if="activeTab === 'providers'" />
       <StorageSection v-else-if="activeTab === 'storage'" />
       <PreferencesSection v-else-if="activeTab === 'preferences'" />
       <AppearanceSection v-else-if="activeTab === 'appearance'" />

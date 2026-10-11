@@ -128,15 +128,16 @@ const LANGS = [
 const text = ref("");
 const fromLang = ref("");
 const toLang = ref("");
-const engine = ref(
-  (() => {
-    try {
-      return JSON.parse(localStorage.getItem("btr-prefs") || "{}").defaultEngine || "auto";
-    } catch {
-      return "auto";
-    }
-  })(),
-);
+const engine = ref("auto");
+
+onMounted(async () => {
+  try {
+    const info = await invoke<{ defaultEngine: string }>("engine_info");
+    engine.value = info.defaultEngine;
+  } catch {
+    /* 回落 auto */
+  }
+});
 const loading = ref(false);
 const streaming = ref(false);
 const result = ref<TranslationResult | null>(null);

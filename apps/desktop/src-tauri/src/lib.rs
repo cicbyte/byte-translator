@@ -283,14 +283,80 @@ async fn provider_fetch_models(
         .map_err(|e| format!("{e:#}"))
 }
 
-/// 设置词典引擎 Key（进程内环境变量；翻译调度即时生效）
+/// 设置词典引擎 Key：写库（跨端共享）+ 进程内即时生效
 #[tauri::command]
-fn set_iciba_key(key: String) {
+fn set_iciba_key(state: State<'_, AppState>, key: String) -> Result<(), String> {
     let k = key.trim().to_string();
+    state
+        .services
+        .config
+        .set(byte_translator_core::service::config::KEY_ICIBA_API_KEY, &k)
+        .map_err(|e| format!("{e:#}"))?;
     if k.is_empty() {
         std::env::remove_var("ICIBA_API_KEY");
     } else {
         std::env::set_var("ICIBA_API_KEY", k);
+    }
+    Ok(())
+}
+
+/// 引擎概览：两引擎的能力与就绪状态
+#[tauri::command]
+fn engine_info(state: State<'_, AppState>) -> serde_json::Value {
+    let iciba_key_cfg = state
+        .services
+        .config
+        .get(byte_translator_core::service::config::KEY_ICIBA_API_KEY)
+        .ok()
+        .flatten()
+        .filter(|v| !v.trim().is_empty());
+    let env_key = std::env::var("ICIBA_API_KEY").ok().filter(|v| !v.trim().is_empty());
+    let llm_provider = state.services.providers.enabled_config().ok().map(|c| c.provider_key);
+    serde_json::json!({
+        "iciba": {
+            "keySource": if env_key.is_some() { "env" }
+                else if iciba_key_cfg.is_some() { "db" }
+                else { "builtin" },
+            "keySet": env_key.is_some() || iciba_key_cfg.is_some(),
+        },
+        "llm": { "provider": llm_provider },
+        "defaultEngine": state.services.config.default_engine(),
+    })
+}
+
+/// 设置默认引擎策略（auto / iciba / llm）
+#[tauri::command]
+fn set_default_engine(state: State<'_, AppState>, engine: String) -> Result<(), String> {
+    if !["auto", "iciba", "llm"].contains(&engine.as_str()) {
+        return Err(format!("非法引擎策略: {engine}"));
+    }
+    state
+        .services
+        .config
+        .set(byte_translator_core::service::config::KEY_DEFAULT_ENGINE, &engine)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// 词典引擎连通测试：真查一个常用词验证 Key
+#[tauri::command]
+async fn engine_test_iciba(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let req = byte_translator_core::translator::TranslateRequest {
+        text: "love".into(),
+        from: Some("en".into()),
+        to: Some("zh".into()),
+    };
+    match state
+        .services
+        .translate
+        .translate(&req, &byte_translator_core::service::translate::EngineChoice::Named("iciba".into()))
+        .await
+    {
+        Ok(outcome) => Ok(serde_json::json!({
+            "ok": true,
+            "word": outcome.result.text,
+            "meanings": outcome.result.parts.len(),
+        })),
+        Err(e) => Err(format!("{e:#}")),
     }
 }
 
@@ -462,6 +528,9 @@ fn try_run() -> anyhow::Result<()> {
             api_keys,
             api_key_rotate,
             set_iciba_key,
+            engine_info,
+            set_default_engine,
+            engine_test_iciba,
             app_info,
             api_key_set,
             service_status,
