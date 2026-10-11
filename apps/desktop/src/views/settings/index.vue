@@ -47,7 +47,7 @@ const activeTab = ref("engines");
 
     <!-- 右：分区内容 -->
     <div class="settings-content">
-      <EnginesSection v-if="activeTab === 'engines'" @goto-providers="activeTab = 'providers'" />
+      <EnginesSection v-if="activeTab === 'engines'" class="engines-full" @goto-providers="activeTab = 'providers'" />
       <ProviderSection v-else-if="activeTab === 'providers'" />
       <StorageSection v-else-if="activeTab === 'storage'" />
       <PreferencesSection v-else-if="activeTab === 'preferences'" />
