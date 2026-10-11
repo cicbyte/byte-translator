@@ -16,6 +16,7 @@ use crate::db::Database;
 use crate::lang::{detect_zh_en, normalize_lang};
 use crate::service::provider::ProviderService;
 use crate::translator::llm::LlmTranslator;
+use crate::translator::registry;
 use crate::translator::{cache::CachedTranslator, iciba::IcibaTranslator, TranslateRequest, TranslationResult, Translator};
 
 /// 引擎选择：自动调度 / 显式指定
@@ -42,10 +43,11 @@ pub fn is_word_like(text: &str) -> bool {
 type EngineFactory = Arc<dyn Fn() -> Box<dyn Translator> + Send + Sync>;
 type LlmFactory = Arc<dyn Fn() -> Result<Box<dyn Translator>> + Send + Sync>;
 
-/// 调度器：词典工厂 + LLM 工厂
+/// 调度器：词典工厂 + LLM 工厂 + 引擎配置库（注册表引擎装配用）
 pub struct TranslateService {
     dictionary_factory: Option<EngineFactory>,
     llm_factory: LlmFactory,
+    config_db: Option<Arc<Database>>,
 }
 
 impl TranslateService {
@@ -54,6 +56,7 @@ impl TranslateService {
     /// LLM = 启用中的供应商（未启用时翻译报错并给配置指引）
     pub fn production(db: Arc<Database>) -> Self {
         let providers = ProviderService::new(db.clone());
+        let config_db = db.clone();
         let dict_db = db.clone();
         Self {
             // Key 在工厂内现读环境变量：运行期可更新（桌面设置页改 Key 即时生效）
@@ -68,12 +71,13 @@ impl TranslateService {
                 let cfg = providers.enabled_config()?;
                 Ok(Box::new(LlmTranslator::new(cfg)))
             }),
+            config_db: Some(config_db),
         }
     }
 
     /// 测试注入构造器
     pub fn with_engines(dictionary_factory: Option<EngineFactory>, llm_factory: LlmFactory) -> Self {
-        Self { dictionary_factory, llm_factory }
+        Self { dictionary_factory, llm_factory, config_db: None }
     }
 
     /// 执行翻译
@@ -104,9 +108,7 @@ impl TranslateService {
                 let result = match name.as_str() {
                     "iciba" => self.translate_iciba(&req, &from, &to).await?,
                     "llm" => self.translate_llm(&req).await?,
-                    other => {
-                        return Err(anyhow!("不支持的引擎: {other}（可用: iciba / llm）"))
-                    }
+                    other => self.translate_registry(other, &req).await?,
                 };
                 Ok(TranslateOutcome { result, fallback_from: None })
             }
@@ -144,6 +146,27 @@ impl TranslateService {
             let result = self.translate_llm(req).await?;
             Ok(TranslateOutcome { result, fallback_from: None })
         }
+    }
+
+    /// 注册表引擎（google / mymemory / deepl / baidu / youdao / tencent）
+    async fn translate_registry(
+        &self,
+        name: &str,
+        req: &TranslateRequest,
+    ) -> Result<TranslationResult> {
+        let desc = registry::descriptor(name)
+            .ok_or_else(|| anyhow!("不支持的引擎: {name}（可用: iciba / llm / {}", registry::descriptor_names().join(" / ")))?;
+        let cfg = self
+            .config_db
+            .as_ref()
+            .and_then(|db| {
+                let svc = crate::service::config::ConfigService::new(db.clone());
+                svc.get(&registry::config_key(name)).ok().flatten()
+            })
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+        let engine = (desc.build)(cfg.as_ref())
+            .ok_or_else(|| anyhow!("引擎 {name} 未配置（设置 → 翻译引擎）"))?;
+        engine.translate(req).await
     }
 
     async fn translate_iciba(
@@ -292,7 +315,7 @@ mod tests {
         let llm = Arc::new(AtomicUsize::new(0));
         let svc = TranslateService::with_engines(None, llm_ok(llm.clone()));
         let err = svc
-            .translate(&req("love"), &EngineChoice::Named("baidu".into()))
+            .translate(&req("love"), &EngineChoice::Named("nosuch".into()))
             .await
             .unwrap_err();
         assert!(err.to_string().contains("不支持的引擎"));

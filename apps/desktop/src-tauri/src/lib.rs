@@ -300,28 +300,143 @@ fn set_iciba_key(state: State<'_, AppState>, key: String) -> Result<(), String> 
     Ok(())
 }
 
-/// 引擎概览：两引擎的能力与就绪状态
+/// 引擎列表（注册表全量 + 配置状态 + 已保存字段标记）
 #[tauri::command]
-fn engine_info(state: State<'_, AppState>) -> serde_json::Value {
-    let iciba_key_cfg = state
-        .services
-        .config
-        .get(byte_translator_core::service::config::KEY_ICIBA_API_KEY)
-        .ok()
-        .flatten()
-        .filter(|v| !v.trim().is_empty());
-    let env_key = std::env::var("ICIBA_API_KEY").ok().filter(|v| !v.trim().is_empty());
-    let llm_provider = state.services.providers.enabled_config().ok().map(|c| c.provider_key);
+fn engines_list(state: State<'_, AppState>) -> serde_json::Value {
+    use byte_translator_core::translator::registry;
+    let cfg_svc = &state.services.config;
+    let engines: Vec<serde_json::Value> = registry::descriptors()
+        .iter()
+        .map(|d| {
+            let cfg_json = cfg_svc
+                .get(&registry::config_key(d.name))
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+            let saved: serde_json::Value = match &cfg_json {
+                Some(v) => {
+                    let mut m = serde_json::Map::new();
+                    for (field, _) in d.key_fields {
+                        let set = v.get(*field)
+                            .and_then(|f| f.as_str())
+                            .map(|x| !x.trim().is_empty())
+                            .unwrap_or(false);
+                        m.insert(field.to_string(), serde_json::json!(set));
+                    }
+                    serde_json::Value::Object(m)
+                }
+                None => serde_json::json!({}),
+            };
+            // iciba 的 key 走独立配置键
+            let (configured, saved) = if d.name == "iciba" {
+                let set = cfg_svc
+                    .get(byte_translator_core::service::config::KEY_ICIBA_API_KEY)
+                    .ok()
+                    .flatten()
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false)
+                    || std::env::var("ICIBA_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false);
+                (set, serde_json::json!({ "key": set }))
+            } else if d.name == "llm" {
+                let on = state.services.providers.enabled_config().is_ok();
+                (on, serde_json::json!({}))
+            } else {
+                (registry::is_configured(d.name, cfg_json.as_ref()), saved)
+            };
+            serde_json::json!({
+                "name": d.name,
+                "label": d.label,
+                "capability": d.capability,
+                "group": format!("{:?}", d.group),
+                "groupLabel": d.group.label(),
+                "keyFields": d.key_fields.iter()
+                    .map(|(f, l)| serde_json::json!({ "field": f, "label": l }))
+                    .collect::<Vec<_>>(),
+                "configured": configured,
+                "saved": saved,
+            })
+        })
+        .collect();
     serde_json::json!({
-        "iciba": {
-            "keySource": if env_key.is_some() { "env" }
-                else if iciba_key_cfg.is_some() { "db" }
-                else { "builtin" },
-            "keySet": env_key.is_some() || iciba_key_cfg.is_some(),
-        },
-        "llm": { "provider": llm_provider },
+        "engines": engines,
         "defaultEngine": state.services.config.default_engine(),
     })
+}
+
+/// 保存引擎配置（values: 各字段值；iciba 特判走独立键）
+#[tauri::command]
+fn engine_set_config(
+    state: State<'_, AppState>,
+    name: String,
+    values: serde_json::Value,
+) -> Result<(), String> {
+    use byte_translator_core::translator::registry;
+    if name == "iciba" {
+        let key = values.get("key").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        return state
+            .services
+            .config
+            .set(byte_translator_core::service::config::KEY_ICIBA_API_KEY, &key)
+            .map_err(|e| format!("{e:#}"));
+    }
+    // 仅保留注册的字段；空值字段剔除（留空保持已有值的语义：前端只传修改项）
+    let desc = registry::descriptor(&name).ok_or_else(|| format!("未知引擎: {name}"))?;
+    if desc.key_fields.is_empty() {
+        return Err(format!("引擎 {name} 无需配置"));
+    }
+    // 合并已有配置（未传字段保留原值）
+    let existing = state
+        .services
+        .config
+        .get(&registry::config_key(&name))
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let mut merged = existing;
+    for (field, _) in desc.key_fields {
+        if let Some(v) = values.get(*field).and_then(|v| v.as_str()) {
+            if v.trim().is_empty() {
+                // 传空串 = 清除该字段
+                if let Some(obj) = merged.as_object_mut() {
+                    obj.remove(*field);
+                }
+            } else {
+                merged[*field] = serde_json::json!(v.trim());
+            }
+        }
+    }
+    state
+        .services
+        .config
+        .set(&registry::config_key(&name), &merged.to_string())
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// 引擎连通测试：装配后真查一个常用词
+#[tauri::command]
+async fn engine_test(state: State<'_, AppState>, name: String) -> Result<serde_json::Value, String> {
+    if name == "llm" {
+        return Ok(serde_json::json!({ "ok": true, "note": "LLM 走启用中的 AI 供应商" }));
+    }
+    let req = byte_translator_core::translator::TranslateRequest {
+        text: "love".into(),
+        from: Some("en".into()),
+        to: Some("zh".into()),
+    };
+    match state
+        .services
+        .translate
+        .translate(&req, &byte_translator_core::service::translate::EngineChoice::Named(name))
+        .await
+    {
+        Ok(outcome) => Ok(serde_json::json!({
+            "ok": true,
+            "word": outcome.result.text,
+            "translation": outcome.result.translation.chars().take(40).collect::<String>(),
+        })),
+        Err(e) => Err(format!("{e:#}")),
+    }
 }
 
 /// 设置默认引擎策略（auto / iciba / llm）
@@ -335,29 +450,6 @@ fn set_default_engine(state: State<'_, AppState>, engine: String) -> Result<(), 
         .config
         .set(byte_translator_core::service::config::KEY_DEFAULT_ENGINE, &engine)
         .map_err(|e| format!("{e:#}"))
-}
-
-/// 词典引擎连通测试：真查一个常用词验证 Key
-#[tauri::command]
-async fn engine_test_iciba(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let req = byte_translator_core::translator::TranslateRequest {
-        text: "love".into(),
-        from: Some("en".into()),
-        to: Some("zh".into()),
-    };
-    match state
-        .services
-        .translate
-        .translate(&req, &byte_translator_core::service::translate::EngineChoice::Named("iciba".into()))
-        .await
-    {
-        Ok(outcome) => Ok(serde_json::json!({
-            "ok": true,
-            "word": outcome.result.text,
-            "meanings": outcome.result.parts.len(),
-        })),
-        Err(e) => Err(format!("{e:#}")),
-    }
 }
 
 /// 应用信息（数据目录等，供设置页展示）
@@ -528,9 +620,10 @@ fn try_run() -> anyhow::Result<()> {
             api_keys,
             api_key_rotate,
             set_iciba_key,
-            engine_info,
+            engines_list,
+            engine_set_config,
             set_default_engine,
-            engine_test_iciba,
+            engine_test,
             app_info,
             api_key_set,
             service_status,

@@ -23,6 +23,11 @@ rig-core = { workspace = true }
 futures = { workspace = true }
 async-trait = "0.1"
 roxmltree = "0.20"
+md-5 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 # === REST API 服务（btr serve；feature 关闭零增量）===

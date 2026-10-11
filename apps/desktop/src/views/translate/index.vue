@@ -22,8 +22,14 @@
           <a-divider type="vertical" />
           <a-select v-model:value="engine" size="small" :bordered="false" class="engine-select">
             <a-select-option value="auto">自动调度</a-select-option>
-            <a-select-option value="iciba">词典</a-select-option>
-            <a-select-option value="llm">LLM</a-select-option>
+            <a-select-option
+              v-for="e in engineOptions"
+              :key="e.name"
+              :value="e.name"
+              :disabled="!e.configured"
+            >
+              {{ e.label }}{{ e.configured ? "" : "（未配置）" }}
+            </a-select-option>
           </a-select>
         </div>
         <a-button type="primary" size="small" :loading="loading" @click="translate">
@@ -129,11 +135,15 @@ const text = ref("");
 const fromLang = ref("");
 const toLang = ref("");
 const engine = ref("auto");
+const engineOptions = ref<{ name: string; label: string; configured: boolean }[]>([]);
 
 onMounted(async () => {
   try {
-    const info = await invoke<{ defaultEngine: string }>("engine_info");
-    engine.value = info.defaultEngine;
+    const v = await invoke<{ engines: { name: string; label: string; configured: boolean }[]; defaultEngine: string }>(
+      "engines_list",
+    );
+    engineOptions.value = v.engines;
+    engine.value = v.defaultEngine;
   } catch {
     /* 回落 auto */
   }

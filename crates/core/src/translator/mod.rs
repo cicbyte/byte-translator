@@ -18,8 +18,11 @@
 //! ```
 
 pub mod cache;
+pub mod commercial;
 pub mod iciba;
 pub mod llm;
+pub mod registry;
+pub mod web_free;
 
 use anyhow::Result;
 use async_trait::async_trait;
