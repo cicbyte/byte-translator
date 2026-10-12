@@ -7,18 +7,11 @@ import { message } from "ant-design-vue";
 import { ClusterOutlined } from "@ant-design/icons-vue";
 import { invoke } from "@tauri-apps/api/core";
 import ServicePanel from "@/components/servers/ServicePanel.vue";
+import ToolListPane from "./components/ToolListPane.vue";
 
 const tab = ref<"server" | "tools" | "config">("server");
 const port = ref(8324);
 const mcpKey = ref("");
-
-const TOOLS = [
-  { name: "translate", sig: "(text, from?, to?, engine?)", desc: "翻译：词查词典、句走 LLM，未命中自动降级 LLM" },
-  { name: "define", sig: "(word)", desc: "词典释义：音标 / 词性 / 例句（仅中英）" },
-  { name: "history_search", sig: "(keyword?, limit?)", desc: "检索本地翻译历史" },
-  { name: "wordbook_add", sig: "(text, note?)", desc: "收藏生词（幂等：重复收藏更新备注）" },
-  { name: "wordbook_list", sig: "(keyword?, limit?)", desc: "生词本列表" },
-];
 
 const httpEndpoint = computed(() => `http://127.0.0.1:${port.value}/mcp`);
 
@@ -76,15 +69,7 @@ load();
       </div>
 
       <!-- 工具列表 -->
-      <div v-else-if="tab === 'tools'" class="sub-pane">
-        <div class="block">
-          <div class="block-title">AI 客户端可调用的 5 个工具</div>
-          <div class="tool-row" v-for="t in TOOLS" :key="t.name">
-            <code class="tool-sig">{{ t.name }}{{ t.sig }}</code>
-            <span class="tool-desc">{{ t.desc }}</span>
-          </div>
-        </div>
-      </div>
+      <ToolListPane v-else-if="tab === 'tools'" />
 
       <!-- 客户端接入 -->
       <div v-else class="sub-pane">
@@ -228,23 +213,4 @@ load();
   margin: 0;
 }
 
-.tool-row {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  padding: 9px 0;
-}
-.tool-row + .tool-row {
-  border-top: 1px solid var(--border-light);
-}
-.tool-sig {
-  font-family: "JetBrains Mono", Consolas, monospace;
-  font-size: 12.5px;
-  color: var(--color-primary);
-  flex-shrink: 0;
-}
-.tool-desc {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
 </style>

@@ -13,6 +13,7 @@ const props = defineProps<{
 }>();
 
 const running = ref(false);
+const host = ref<"127.0.0.1" | "0.0.0.0">("127.0.0.1");
 const port = ref(props.defaultPort);
 const portBeforeEdit = ref(props.defaultPort);
 const toggling = ref(false);
@@ -22,12 +23,14 @@ const keySaving = ref(false);
 const revealed = ref(false);
 
 async function load() {
-  const svc = await invoke<{ rest?: { running: boolean; port: number }; mcp?: { running: boolean; port: number } }>(
-    "service_status",
-  );
+  const svc = await invoke<{
+    rest?: { running: boolean; host: string; port: number };
+    mcp?: { running: boolean; host: string; port: number };
+  }>("service_status");
   const s = svc[props.kind];
   running.value = !!s?.running;
   if (s?.port) port.value = s.port;
+  if (s?.host === "0.0.0.0") host.value = "0.0.0.0";
   const keys = await invoke<{ rest: string; mcp: string }>("api_keys");
   apiKey.value = keys[props.kind];
   keyInput.value = "";
@@ -37,9 +40,9 @@ async function load() {
 async function toggle() {
   toggling.value = true;
   try {
-    await invoke("service_toggle", { kind: props.kind, on: !running.value, port: port.value });
+    await invoke("service_toggle", { kind: props.kind, on: !running.value, port: port.value, host: host.value });
     await load();
-    message.success(running.value ? `已启动（:${port.value}）` : "已停止");
+    message.success(running.value ? `已启动（${host.value}:${port.value}）` : "已停止");
   } catch (e) {
     await load();
     message.error(String(e));
@@ -110,7 +113,16 @@ watch(() => props.kind, load, { immediate: true });
     <div class="row">
       <span class="row-label">监听</span>
       <div class="row-value">
-        <span class="host-static">127.0.0.1</span>
+        <a-select
+          v-model:value="host"
+          size="small"
+          :disabled="running"
+          style="width: 108px"
+          :options="[
+            { value: '127.0.0.1', label: '127.0.0.1' },
+            { value: '0.0.0.0', label: '0.0.0.0' },
+          ]"
+        />
         <span class="colon">:</span>
         <input
           :value="port"
@@ -150,8 +162,15 @@ watch(() => props.kind, load, { immediate: true });
       </div>
     </div>
 
+    <a-alert
+      v-if="host === '0.0.0.0'"
+      type="warning"
+      show-icon
+      style="margin-top: 2px"
+      message="绑定所有网卡：局域网内其它机器可访问（防火墙放行后生效），请求必须携带 API Key"
+    />
     <p class="panel-note">
-      鉴权恒开：回环免 Key（本机调试通道），非回环强制 Key。停止态才能改 Key 与端口。
+      鉴权恒开：回环免 Key（本机调试通道），非回环强制 Key。停止态才能改监听、端口与 Key。
     </p>
   </div>
 </template>

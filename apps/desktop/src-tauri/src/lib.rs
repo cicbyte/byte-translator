@@ -27,6 +27,7 @@ struct AppState {
 #[derive(Default)]
 struct ServiceHandle {
     running: bool,
+    host: String,
     port: u16,
     cancel: Option<CancellationToken>,
 }
@@ -487,9 +488,10 @@ fn api_key_set(state: State<'_, AppState>, kind: String, key: String) -> Result<
 fn service_status(state: State<'_, AppState>) -> serde_json::Value {
     let rest = state.rest.lock().unwrap();
     let mcp = state.mcp.lock().unwrap();
+    let host = |h: &ServiceHandle| if h.host.is_empty() { "127.0.0.1".to_string() } else { h.host.clone() };
     serde_json::json!({
-        "rest": { "running": rest.running, "port": rest.port },
-        "mcp": { "running": mcp.running, "port": mcp.port },
+        "rest": { "running": rest.running, "host": host(&rest), "port": rest.port },
+        "mcp": { "running": mcp.running, "host": host(&mcp), "port": mcp.port },
     })
 }
 
@@ -499,6 +501,7 @@ async fn service_toggle(
     kind: String,
     on: bool,
     port: Option<u16>,
+    host: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let is_rest = match kind.as_str() {
         "rest" => true,
@@ -518,12 +521,17 @@ async fn service_toggle(
 
     // 启动：锁内登记运行位；bind 失败立即回滚（不出现假运行）
     let port = port.unwrap_or(if is_rest { 8321 } else { 8324 });
+    let host = host
+        .map(|h| h.trim().to_string())
+        .filter(|h| h == "0.0.0.0")
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     {
         let mut h = slot.lock().unwrap();
         if h.running {
             return Err("服务已在运行".into());
         }
         h.running = true;
+        h.host = host.clone();
         h.port = port;
     }
     let rollback = || {
@@ -546,16 +554,21 @@ async fn service_toggle(
 
     if is_rest {
         let cfg = byte_translator_core::rest::ServeConfig {
-            host: "127.0.0.1".into(),
+            host: host.clone(),
             port,
             api_key: keys.rest,
             allow_local_no_key: false,
         };
-        let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
+        // 非回环绑定强制 Key（core 校验规则的桌面前置；自动生成的 Key 恒非空）
+        if host != "127.0.0.1" && cfg.api_key.trim().is_empty() {
+            rollback();
+            return Err("绑定 0.0.0.0 必须持有 API Key".into());
+        }
+        let listener = tokio::net::TcpListener::bind(format!("{host}:{port}"))
             .await
             .map_err(|e| {
                 rollback();
-                format!("绑定端口 {port} 失败：{e}")
+                format!("绑定 {host}:{port} 失败：{e}")
             })?;
         let key: byte_translator_core::rest::SharedKey =
             std::sync::Arc::new(std::sync::RwLock::new(cfg.api_key.clone()));
@@ -572,8 +585,9 @@ async fn service_toggle(
         let key: byte_translator_core::rest::SharedKey =
             std::sync::Arc::new(std::sync::RwLock::new(keys.mcp.clone()));
         let db = state.db.clone();
+        let mcp_host = host.clone();
         tokio::spawn(async move {
-            let _ = byte_translator_core::mcp::server::serve_http(db, "127.0.0.1", port, key, shutdown).await;
+            let _ = byte_translator_core::mcp::server::serve_http(db, &mcp_host, port, key, shutdown).await;
             tracing::info!("MCP 服务已停止");
         });
     }

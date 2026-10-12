@@ -11,15 +11,9 @@ import ServicePanel from "@/components/servers/ServicePanel.vue";
 const tab = ref<"server" | "access" | "docs">("server");
 const port = ref(8321);
 const restKey = ref("");
+const svcRunning = ref(false);
 
-const ENDPOINTS = [
-  { method: "POST", path: "/api/v1/translate", desc: "翻译（stream:true 走 SSE 流式）" },
-  { method: "GET", path: "/api/v1/history", desc: "历史检索（keyword/engine/from/to/page/size）" },
-  { method: "GET/POST", path: "/api/v1/wordbook", desc: "生词本列表 / 幂等收藏" },
-  { method: "DELETE", path: "/api/v1/wordbook/{id}", desc: "删除生词" },
-  { method: "GET/PUT", path: "/api/v1/providers", desc: "供应商查看（Key 不回显）/ 配置" },
-  { method: "GET", path: "/health", desc: "探活（免鉴权）" },
-];
+const docsLoading = ref(false);
 
 const curlSample = computed(
   () => `curl -X POST http://127.0.0.1:${port.value}/api/v1/translate \\
@@ -30,6 +24,7 @@ const curlSample = computed(
 
 async function load() {
   const svc = await invoke<{ rest?: { running: boolean; port: number } }>("service_status");
+  svcRunning.value = !!svc.rest?.running;
   port.value = svc.rest?.port || 8321;
   const keys = await invoke<{ rest: string }>("api_keys");
   restKey.value = keys.rest;
@@ -60,7 +55,13 @@ load();
     <div class="sub-tabs">
       <button class="sub-tab" :class="{ active: tab === 'server' }" @click="tab = 'server'">服务管理</button>
       <button class="sub-tab" :class="{ active: tab === 'access' }" @click="tab = 'access'">接入</button>
-      <button class="sub-tab" :class="{ active: tab === 'docs' }" @click="tab = 'docs'; load()">API 文档</button>
+      <button
+        class="sub-tab"
+        :class="{ active: tab === 'docs' }"
+        @click="if (tab !== 'docs') { tab = 'docs'; load(); docsLoading = true; }"
+      >
+        API 文档
+      </button>
     </div>
 
     <div class="page-scroll sub-pane">
@@ -114,6 +115,14 @@ export BTR_API_KEY=&lt;API Key&gt;</pre>
         </div>
 
         <div class="block">
+          <div class="block-title-row">
+            <div class="block-title">快速调用（SSE 流式）</div>
+            <a-button size="small" @click="copy(curlSample)">复制</a-button>
+          </div>
+          <pre class="cmd">{{ curlSample }}</pre>
+        </div>
+
+        <div class="block">
           <div class="block-title">远程模式能力范围</div>
           <ul class="scope-list">
             <li>支持：翻译、历史检索、生词本增删查</li>
@@ -122,32 +131,29 @@ export BTR_API_KEY=&lt;API Key&gt;</pre>
         </div>
       </div>
 
-      <!-- API 文档 -->
-      <div v-else class="sub-pane">
-        <div class="block">
-          <div class="block-title-row">
-            <div class="block-title">交互文档（Swagger UI）</div>
-            <a-button size="small" @click="openSwagger">
-              <template #icon><ExportOutlined /></template>
-              在浏览器打开
-            </a-button>
+      <!-- API 文档：运行时内嵌 Swagger UI，未运行空态 -->
+      <div v-else class="sub-pane docs-pane">
+        <template v-if="svcRunning">
+          <div class="swagger-toolbar">
+            <span class="swagger-label">交互式 API 文档（Swagger UI）</span>
+            <a-button size="small" @click="openSwagger">浏览器中打开</a-button>
           </div>
-          <p class="note">服务运行时访问 <code>http://127.0.0.1:{{ port }}/api/v1/docs</code>（免鉴权，不含数据）。</p>
-        </div>
-        <div class="block">
-          <div class="block-title">端点一览</div>
-          <div class="endpoint-row" v-for="ep in ENDPOINTS" :key="ep.path">
-            <span class="ep-method">{{ ep.method }}</span>
-            <code class="ep-path">{{ ep.path }}</code>
-            <span class="ep-desc">{{ ep.desc }}</span>
+          <div class="swagger-frame-wrap">
+            <div v-if="docsLoading" class="swagger-loading">
+              <a-spin />
+              <span>正在加载 Swagger UI…</span>
+            </div>
+            <iframe
+              :src="`http://127.0.0.1:${port}/api/v1/docs`"
+              class="swagger-frame"
+              @load="docsLoading = false"
+              @error="docsLoading = false"
+            />
           </div>
-        </div>
-        <div class="block">
-          <div class="block-title-row">
-            <div class="block-title">快速调用（SSE 流式）</div>
-            <a-button size="small" @click="copy(curlSample)">复制</a-button>
-          </div>
-          <pre class="cmd">{{ curlSample }}</pre>
+        </template>
+        <div v-else class="swagger-empty">
+          <p class="note">启动服务后，此处显示交互式 API 文档。</p>
+          <p class="note">也可在浏览器打开 <code>http://localhost:{{ port || 8321 }}/api/v1/docs</code></p>
         </div>
       </div>
     </div>
