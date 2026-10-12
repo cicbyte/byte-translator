@@ -344,4 +344,55 @@ export BTR_API_KEY=&lt;API Key&gt;</pre>
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* ===== API 文档 iframe ===== */
+.docs-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.swagger-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.swagger-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.swagger-frame-wrap {
+  position: relative;
+  height: calc(100vh - 300px);
+  min-height: 420px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.swagger-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+.swagger-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg-surface);
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  z-index: 1;
+}
+.swagger-empty {
+  padding: 48px 0;
+  text-align: center;
+}
 </style>
