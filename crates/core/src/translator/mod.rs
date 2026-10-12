@@ -22,6 +22,7 @@ pub mod commercial;
 pub mod iciba;
 pub mod llm;
 pub mod registry;
+pub mod rotation;
 pub mod web_free;
 
 use anyhow::Result;

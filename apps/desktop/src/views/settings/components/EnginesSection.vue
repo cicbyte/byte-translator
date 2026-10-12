@@ -167,9 +167,11 @@ onMounted(() => load(false));
               {{ f.label }}
               <span v-if="current.saved[f.field]" class="field-saved">已设置</span>
             </div>
-            <a-input-password
+            <a-textarea
               v-model:value="form[f.field]"
-              :placeholder="current.saved[f.field] ? '留空保存 = 清除' : '输入后保存'"
+              :placeholder="current.saved[f.field] ? '留空保存 = 清除；输入则整体替换' : '输入后保存；多组凭据用逗号分隔（成对字段需按顺序对应）'"
+              :auto-size="{ minRows: 1, maxRows: 4 }"
+              class="mono-input"
             />
           </div>
           <div class="field-actions">
@@ -380,6 +382,10 @@ export default { emits: ["goto-providers"] };
 .field-actions {
   display: flex;
   gap: 8px;
+}
+.mono-input :deep(textarea) {
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
 }
 
 .hint-block {

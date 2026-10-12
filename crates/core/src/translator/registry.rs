@@ -2,11 +2,15 @@
 //!
 //! Key 配置存 sys_config：`engine.<name>` → JSON（各引擎字段见 descriptor.key_fields）。
 //! iciba 沿用独立键 `iciba_api_key`（历史约定）。
+//!
+//! 多凭据：字段值支持逗号/分号/换行分隔多值；成对凭据（appid+secret 等）按
+//! 顺序配对生成多实例，经 Key 轮换包装（失败自动切换，见 rotation.rs）。
 
 use serde_json::Value;
 
 use super::commercial::{BaiduTranslator, DeeplTranslator, TencentTranslator, YoudaoTranslator};
 use super::iciba::IcibaTranslator;
+use super::rotation::{split_multi, KeyRotationTranslator};
 use super::web_free::{GoogleTranslator, MyMemoryTranslator};
 use super::Translator;
 use crate::lang::{detect_zh_en, normalize_lang};
@@ -53,12 +57,51 @@ pub fn config_key(engine: &str) -> String {
     format!("engine.{engine}")
 }
 
+/// 装配辅助：单字段多值（如 deepl auth_key）
+fn build_multi_single<F>(cfg: Option<&Value>, field: &str, ctor: F) -> Option<Box<dyn Translator>>
+where
+    F: Fn(String) -> Box<dyn Translator>,
+{
+    let raw = cfg?.get(field)?.as_str()?;
+    let keys = split_multi(raw);
+    if keys.is_empty() {
+        return None;
+    }
+    let engines: Vec<Box<dyn Translator>> = keys.into_iter().map(ctor).collect();
+    Some(pack(engines))
+}
+
+/// 装配辅助：成对字段多值（如 appid+secret），按顺序配对、以较短一侧为准
+fn build_multi_paired<F>(cfg: Option<&Value>, fa: &str, fb: &str, ctor: F) -> Option<Box<dyn Translator>>
+where
+    F: Fn(String, String) -> Box<dyn Translator>,
+{
+    let v = cfg?;
+    let a = split_multi(v.get(fa)?.as_str()?);
+    let b = split_multi(v.get(fb)?.as_str()?);
+    let n = a.len().min(b.len());
+    if n == 0 {
+        return None;
+    }
+    let engines: Vec<Box<dyn Translator>> = (0..n).map(|i| ctor(a[i].clone(), b[i].clone())).collect();
+    Some(pack(engines))
+}
+
+/// 单实例直接返回；多实例包 Key 轮换
+fn pack(engines: Vec<Box<dyn Translator>>) -> Box<dyn Translator> {
+    if engines.len() == 1 {
+        engines.into_iter().next().expect("len==1")
+    } else {
+        Box::new(KeyRotationTranslator::new(engines))
+    }
+}
+
 pub fn descriptors() -> &'static [EngineDescriptor] {
     &[
         EngineDescriptor {
             name: "google",
             label: "Google 翻译",
-            capability: "任意语言对 · 自动检测 · 社区免 Key 接口",
+            capability: "任意语言对 · 自动检测 · 社区免 Key 接口（需可访问 Google 的网络）",
             group: EngineGroup::Free,
             key_fields: &[],
             build: |_| Some(Box::new(GoogleTranslator::new())),
@@ -66,7 +109,7 @@ pub fn descriptors() -> &'static [EngineDescriptor] {
         EngineDescriptor {
             name: "mymemory",
             label: "MyMemory",
-            capability: "常见语言对 · 翻译记忆库聚合 · 免 Key",
+            capability: "常见语言对 · 翻译记忆库聚合 · 免 Key（匿名每日限额）",
             group: EngineGroup::Free,
             key_fields: &[],
             build: |_| Some(Box::new(MyMemoryTranslator::new())),
@@ -74,54 +117,53 @@ pub fn descriptors() -> &'static [EngineDescriptor] {
         EngineDescriptor {
             name: "deepl",
             label: "DeepL",
-            capability: "任意语言对 · 高质量 · 免费档需申请 auth_key",
+            capability: "任意语言对 · 高质量 · 免费档需申请 auth_key（支持多值轮换）",
             group: EngineGroup::Keyed,
-            key_fields: &[("auth_key", "Auth Key（免费档以 :fx 结尾）")],
-            build: |cfg| {
-                cfg.and_then(|v| v.get("auth_key")?.as_str().map(|k| {
-                    Box::new(DeeplTranslator::new(k.to_string())) as Box<dyn Translator>
-                }))
-            },
+            key_fields: &[("auth_key", "Auth Key（免费档以 :fx 结尾；多个用逗号分隔）")],
+            build: |cfg| build_multi_single(cfg, "auth_key", |k| Box::new(DeeplTranslator::new(k))),
         },
         EngineDescriptor {
             name: "baidu",
             label: "百度翻译",
-            capability: "任意语言对 · 标准版每月 100 万字符免费",
+            capability: "任意语言对 · 标准版每月 100 万字符免费（支持多组凭据轮换）",
             group: EngineGroup::Keyed,
-            key_fields: &[("appid", "APP ID"), ("secret", "密钥")],
+            key_fields: &[
+                ("appid", "APP ID（多组按顺序与密钥成对，逗号分隔）"),
+                ("secret", "密钥（与 APP ID 顺序对应，逗号分隔）"),
+            ],
             build: |cfg| {
-                cfg.and_then(|v| {
-                    let appid = v.get("appid")?.as_str()?;
-                    let secret = v.get("secret")?.as_str()?;
-                    Some(Box::new(BaiduTranslator::new(appid.into(), secret.into())) as Box<dyn Translator>)
+                build_multi_paired(cfg, "appid", "secret", |id, secret| {
+                    Box::new(BaiduTranslator::new(id, secret))
                 })
             },
         },
         EngineDescriptor {
             name: "youdao",
             label: "有道智云",
-            capability: "任意语言对 · 免费额度 · 中英质量佳",
+            capability: "任意语言对 · 免费额度 · 中英质量佳（支持多组凭据轮换）",
             group: EngineGroup::Keyed,
-            key_fields: &[("app_key", "应用 Key"), ("app_secret", "应用密钥")],
+            key_fields: &[
+                ("app_key", "应用 Key（多组按顺序与密钥成对，逗号分隔）"),
+                ("app_secret", "应用密钥（与应用 Key 顺序对应）"),
+            ],
             build: |cfg| {
-                cfg.and_then(|v| {
-                    let key = v.get("app_key")?.as_str()?;
-                    let secret = v.get("app_secret")?.as_str()?;
-                    Some(Box::new(YoudaoTranslator::new(key.into(), secret.into())) as Box<dyn Translator>)
+                build_multi_paired(cfg, "app_key", "app_secret", |key, secret| {
+                    Box::new(YoudaoTranslator::new(key, secret))
                 })
             },
         },
         EngineDescriptor {
             name: "tencent",
             label: "腾讯云翻译",
-            capability: "任意语言对 · 每月 500 万字符免费",
+            capability: "任意语言对 · 每月 500 万字符免费（支持多组凭据轮换）",
             group: EngineGroup::Keyed,
-            key_fields: &[("secret_id", "SecretId"), ("secret_key", "SecretKey")],
+            key_fields: &[
+                ("secret_id", "SecretId（多组按顺序与 SecretKey 成对，逗号分隔）"),
+                ("secret_key", "SecretKey（与 SecretId 顺序对应）"),
+            ],
             build: |cfg| {
-                cfg.and_then(|v| {
-                    let id = v.get("secret_id")?.as_str()?;
-                    let key = v.get("secret_key")?.as_str()?;
-                    Some(Box::new(TencentTranslator::new(id.into(), key.into())) as Box<dyn Translator>)
+                build_multi_paired(cfg, "secret_id", "secret_key", |id, key| {
+                    Box::new(TencentTranslator::new(id, key))
                 })
             },
         },
@@ -135,8 +177,8 @@ pub fn descriptors() -> &'static [EngineDescriptor] {
             build: |cfg| {
                 let key = cfg
                     .and_then(|v| v.get("key")?.as_str())
-                    .filter(|k| !k.trim().is_empty())
-                    .map(String::from);
+                    .map(String::from)
+                    .filter(|k| !k.trim().is_empty());
                 Some(Box::new(IcibaTranslator::new(key)) as Box<dyn Translator>)
             },
         },
@@ -151,13 +193,13 @@ pub fn descriptors() -> &'static [EngineDescriptor] {
     ]
 }
 
+pub fn descriptor(name: &str) -> Option<&'static EngineDescriptor> {
+    descriptors().iter().find(|d| d.name == name)
+}
+
 /// 全部引擎名（提示文案用）
 pub fn descriptor_names() -> Vec<&'static str> {
     descriptors().iter().map(|d| d.name).collect()
-}
-
-pub fn descriptor(name: &str) -> Option<&'static EngineDescriptor> {
-    descriptors().iter().find(|d| d.name == name)
 }
 
 /// 是否已配置（免 Key / 已有配置 JSON 的返回 true；llm 特判）
@@ -173,9 +215,12 @@ pub fn is_configured(name: &str, cfg: Option<&Value>) -> bool {
         return true;
     }
     cfg.map(|v| {
-        d.key_fields
-            .iter()
-            .all(|(field, _)| v.get(*field).and_then(|f| f.as_str()).map(|s| !s.trim().is_empty()).unwrap_or(false))
+        d.key_fields.iter().all(|(field, _)| {
+            v.get(*field)
+                .and_then(|f| f.as_str())
+                .map(|s| !split_multi(s).is_empty())
+                .unwrap_or(false)
+        })
     })
     .unwrap_or(false)
 }
@@ -219,6 +264,23 @@ mod tests {
         assert!((d.build)(Some(&partial)).is_none(), "缺 secret 不可装配");
         let full = serde_json::json!({ "appid": "x", "secret": "y" });
         assert!((d.build)(Some(&full)).is_some());
+    }
+
+    #[test]
+    fn multi_key_paired_builds() {
+        let d = descriptor("baidu").unwrap();
+        let two = serde_json::json!({ "appid": "id1,id2", "secret": "s1,s2" });
+        assert!((d.build)(Some(&two)).is_some());
+        // 成对不齐：以短侧为准（1 对仍可装配）
+        let uneven = serde_json::json!({ "appid": "id1,id2", "secret": "s1" });
+        assert!((d.build)(Some(&uneven)).is_some());
+    }
+
+    #[test]
+    fn multi_single_builds() {
+        let d = descriptor("deepl").unwrap();
+        let multi = serde_json::json!({ "auth_key": "k1:fx, k2:fx" });
+        assert!((d.build)(Some(&multi)).is_some());
     }
 
     #[test]
