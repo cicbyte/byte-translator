@@ -193,7 +193,7 @@ watch(() => props.kind, load, { immediate: true });
   width: 64px;
   flex-shrink: 0;
   font-size: 12.5px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 .row-value {
   display: flex;
@@ -242,7 +242,7 @@ watch(() => props.kind, load, { immediate: true });
   border-color: var(--color-primary);
 }
 .port-field:disabled {
-  opacity: 0.55;
+  opacity: 0.7;
 }
 .toggle-btn {
   border: none;
@@ -299,8 +299,8 @@ watch(() => props.kind, load, { immediate: true });
   flex-shrink: 0;
   border: 1px solid var(--border-base);
   border-radius: 6px;
-  background: transparent;
-  color: var(--text-tertiary);
+  background: var(--bg-input);
+  color: var(--text-secondary);
   font-size: 11.5px;
   padding: 3px 10px;
   cursor: pointer;
@@ -317,7 +317,7 @@ watch(() => props.kind, load, { immediate: true });
 .panel-note {
   margin: 2px 0 0;
   font-size: 11.5px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   line-height: 1.6;
 }
 </style>

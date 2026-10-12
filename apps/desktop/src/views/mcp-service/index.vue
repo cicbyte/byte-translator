@@ -119,7 +119,7 @@ load();
 .pane-desc {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   line-height: 1.6;
 }
 .head-icon {
@@ -178,7 +178,7 @@ load();
 .note {
   margin: 8px 0 0;
   font-size: 11.5px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   line-height: 1.7;
 }
 .note code {

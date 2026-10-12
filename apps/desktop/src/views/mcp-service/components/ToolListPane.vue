@@ -117,7 +117,7 @@ function toggle(name: string) {
   flex: 1;
   min-width: 0;
   font-size: 12px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
