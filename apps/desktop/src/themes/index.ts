@@ -138,6 +138,8 @@ export function buildAntdToken(c: ThemeColors, mode: Appearance) {
     algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
     token: {
       colorPrimary: c.primary,
+      // 主色偏亮（如纸墨暗色的纸白）时按钮文字转墨色，防白字低对比
+      colorTextLightSolid: isLightPrimary(c.primary) ? "#1b1c1f" : "#ffffff",
       colorBgBase: c.bgBase,
       colorBgContainer: c.bgSurface,
       colorBgElevated: c.bgElevated,
