@@ -31,6 +31,12 @@ impl GoogleTranslator {
     }
 }
 
+impl Default for GoogleTranslator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Translator for GoogleTranslator {
     fn name(&self) -> &'static str {
@@ -89,6 +95,12 @@ impl MyMemoryTranslator {
                 .build()
                 .expect("构建 HTTP 客户端失败"),
         }
+    }
+}
+
+impl Default for MyMemoryTranslator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

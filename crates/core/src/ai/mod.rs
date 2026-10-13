@@ -191,13 +191,10 @@ pub async fn complete_stream(
                 }
             }
         };
-        match item {
-            Item::Event(StreamEvent::Text { text, .. }) => {
-                full.push_str(&text);
-                on_delta(&text);
-            }
-            // Reasoning / Arguments / Start / End 与未建模负载：翻译场景不消费
-            _ => {}
+        // Reasoning / Arguments / Start / End 与未建模负载：翻译场景不消费
+        if let Item::Event(StreamEvent::Text { text, .. }) = item {
+            full.push_str(&text);
+            on_delta(&text);
         }
     }
     Ok(full)
