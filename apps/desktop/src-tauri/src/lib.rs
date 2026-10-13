@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{ipc::Channel, Manager, State};
+use tauri::{ipc::Channel, Emitter, Manager, State};
+use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tokio_util::sync::CancellationToken;
 
 use byte_translator_core::db::Database;
@@ -594,6 +596,83 @@ async fn service_toggle(
     Ok(serde_json::json!({ "ok": true, "running": true, "port": port }))
 }
 
+/// 全局热键（MVP 固定默认；后续开放设置）
+const HOTKEY_MAIN: &str = "Alt+T";
+const HOTKEY_LOOKUP: &str = "Control+Alt+D";
+
+/// 划词取词：模拟 Ctrl+C → 读剪贴板 → 还原旧值。
+/// 取不到（无选中文本/焦点在管理员权限窗口）返回 None。
+fn capture_selection(app: &tauri::AppHandle) -> Option<String> {
+    use enigo::{Direction, Enigo, Key, Keyboard};
+    let clip = app.clipboard();
+    let saved = clip.read_text().ok();
+
+    let mut enigo = Enigo::new(&enigo::Settings::default()).ok()?;
+    // 热键触发时 Alt 仍被按住：不释放会变成 Ctrl+Alt+C（多数应用不响应）
+    enigo.key(Key::Alt, Direction::Release).ok()?;
+    enigo.key(Key::Control, Direction::Press).ok()?;
+    enigo.key(Key::Unicode('c'), Direction::Click).ok()?;
+    enigo.key(Key::Control, Direction::Release).ok()?;
+    std::thread::sleep(std::time::Duration::from_millis(220));
+
+    // Ctrl+C 后读到的非空文本即取词成功（与旧剪贴板相同不算失败——
+    // 用户可能反复查同一个词）
+    let picked = clip.read_text().ok().filter(|t| {
+        let t = t.trim();
+        !t.is_empty() && t.chars().count() <= 2000
+    });
+
+    // 还原用户剪贴板旧值
+    if let Some(old) = saved {
+        let _ = clip.write_text(&old);
+    }
+    picked
+}
+
+/// 在鼠标光标附近显示划词小窗并通知前端翻译
+fn show_lookup_at_cursor(lookup: &tauri::WebviewWindow, text: &str) -> tauri::Result<()> {
+    // 光标位置（屏幕物理坐标）：取主窗缩放近似——直接用物理坐标
+    let (mut x, mut y) = (200, 200);
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct POINT { x: i32, y: i32 }
+        extern "system" {
+            fn GetCursorPos(lp: *mut POINT) -> i32;
+        }
+        let mut pt = POINT { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut pt) } != 0 {
+            x = pt.x;
+            y = pt.y;
+        }
+    }
+    // 小窗尺寸（物理像素近似；避免越过屏幕右/下缘）
+    let (w, h) = (380, 300);
+    use tauri::PhysicalPosition;
+    let mut px = x + 12;
+    let mut py = y + 12;
+    if let Ok(monitor) = lookup.current_monitor() {
+        if let Some(m) = monitor {
+            let size = m.size();
+            let scale = m.scale_factor();
+            let wpx = (w as f64 * scale) as i32;
+            let hpx = (h as f64 * scale) as i32;
+            if x + 12 + wpx > size.width as i32 {
+                px = (x - wpx - 12).max(0);
+            }
+            if y + 12 + hpx > size.height as i32 {
+                py = (y - hpx - 12).max(0);
+            }
+        }
+    }
+    lookup.set_position(PhysicalPosition::new(px, py))?;
+    lookup.show()?;
+    lookup.set_focus()?;
+    // 前端监听该事件取文本自动翻译
+    lookup.emit("lookup-text", text)?;
+    Ok(())
+}
+
 pub fn run() {
     init_tracing();
     if let Err(e) = try_run() {
@@ -609,7 +688,37 @@ fn try_run() -> anyhow::Result<()> {
     let services = Arc::new(RestServices::new(db.clone()));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app, shortcut, event| {
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            let Some(main) = app.get_webview_window("main") else { return };
+            let Some(lookup) = app.get_webview_window("lookup") else { return };
+            // Alt+T：呼出/隐藏主窗
+            if shortcut.eq(&HOTKEY_MAIN.parse().expect("主窗热键")) {
+                if main.is_visible().unwrap_or(false) && main.is_focused().unwrap_or(false) {
+                    let _ = main.hide();
+                } else {
+                    let _ = main.show();
+                    let _ = main.set_focus();
+                }
+                return;
+            }
+            // Ctrl+Alt+D：划词翻译（取词失败也弹小窗提示，便于手动粘贴）
+            if shortcut.eq(&HOTKEY_LOOKUP.parse().expect("划词热键")) {
+                let text = capture_selection(app).unwrap_or_default();
+                let _ = show_lookup_at_cursor(&lookup, &text);
+            }
+        }).build())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
+            // 全局热键注册（占用时容忍失败并提示日志）
+            let gs = app.global_shortcut();
+            for (label, combo) in [("主窗", HOTKEY_MAIN), ("划词", HOTKEY_LOOKUP)] {
+                if let Err(e) = gs.register(combo) {
+                    tracing::warn!(combo, error = %e, "全局热键注册失败（可能被占用）: {label}");
+                }
+            }
             app.manage(AppState {
                 services,
                 db,

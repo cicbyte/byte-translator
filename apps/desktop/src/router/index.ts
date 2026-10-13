@@ -34,6 +34,12 @@ const router = createRouter({
       meta: { group: "服务", title: "MCP 服务" },
     },
     {
+      path: "/lookup",
+      name: "lookup",
+      component: () => import("../views/lookup/index.vue"),
+      meta: { layout: "bare" },
+    },
+    {
       path: "/settings",
       name: "settings",
       component: () => import("../views/settings/index.vue"),

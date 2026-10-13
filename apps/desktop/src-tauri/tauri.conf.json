@@ -19,6 +19,19 @@
         "minHeight": 520,
         "center": true,
         "decorations": false
+      },
+      {
+        "label": "lookup",
+        "title": "快速翻译",
+        "url": "index.html#/lookup",
+        "width": 380,
+        "height": 300,
+        "resizable": false,
+        "visible": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {

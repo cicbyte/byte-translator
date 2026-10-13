@@ -23,6 +23,9 @@ anyhow = { workspace = true }
 tokio-util = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tauri-plugin-global-shortcut = "2.4.1"
+tauri-plugin-clipboard-manager = "2.5.0"
+enigo = "0.6.1"
 
 [features]
 default = ["custom-protocol"]
