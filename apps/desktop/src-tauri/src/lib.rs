@@ -24,6 +24,10 @@ struct AppState {
     data_root: std::path::PathBuf,
     rest: std::sync::Mutex<ServiceHandle>,
     mcp: std::sync::Mutex<ServiceHandle>,
+    /// 流式翻译取消位（stop 命令置位；新一轮流式开始时复位）
+    stream_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// 启动时注册失败的全局热键（前端查询后提示用户）
+    hotkey_failed: Vec<String>,
 }
 
 #[derive(Default)]
@@ -246,9 +250,15 @@ async fn translate_llm_stream(
         .enabled_config()
         .map_err(|e| format!("{e:#}"))?;
     let history = state.services.history.clone();
+    // 取消位：stop 命令或事件通道失效（窗口销毁）即置位，终止后续生成
+    let cancelled = state.stream_cancel.clone();
+    cancelled.store(false, std::sync::atomic::Ordering::SeqCst);
+    let send_failed = cancelled.clone();
     let outcome = byte_translator_core::translator::llm::translate_stream(&provider, &req, |delta| {
-        let _ = on_event.send(StreamEventWire::Delta { text: delta.to_string() });
-    }, || false)
+        if on_event.send(StreamEventWire::Delta { text: delta.to_string() }).is_err() {
+            send_failed.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }, || cancelled.load(std::sync::atomic::Ordering::SeqCst))
     .await;
     match outcome {
         Ok(result) => {
@@ -261,6 +271,14 @@ async fn translate_llm_stream(
             Err(format!("{e:#}"))
         }
     }
+}
+
+/// 停止进行中的流式翻译（前端停止按钮/离开页面时调用）
+#[tauri::command]
+fn translate_llm_stop(state: State<'_, AppState>) {
+    state
+        .stream_cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 // ===== 本地服务启停（REST / MCP）=====
@@ -455,6 +473,37 @@ fn set_default_engine(state: State<'_, AppState>, engine: String) -> Result<(), 
         .map_err(|e| format!("{e:#}"))
 }
 
+/// 启动时注册失败的全局热键（空串表示全部注册成功）
+#[tauri::command]
+fn hotkey_status(state: State<'_, AppState>) -> String {
+    state.hotkey_failed.join("、")
+}
+
+/// 用系统浏览器打开本机服务页面（仅放行回环地址的 http，防任意 URL 打开）
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !is_loopback_http_url(url.trim()) {
+        return Err("仅支持在浏览器打开本机服务地址".into());
+    }
+    webbrowser::open(url.trim()).map_err(|e| format!("打开浏览器失败：{e}"))
+}
+
+/// 回环 http URL 判定：主机为 127.0.0.1 / localhost / [::1]，
+/// 端口为纯数字且之后紧跟路径/查询/结尾（挡掉 userinfo 混淆如 127.0.0.1:8321@evil.com）
+fn is_loopback_http_url(u: &str) -> bool {
+    let rest = u
+        .strip_prefix("http://127.0.0.1:")
+        .or_else(|| u.strip_prefix("http://localhost:"))
+        .or_else(|| u.strip_prefix("http://[::1]:"));
+    let Some(rest) = rest else { return false };
+    let port: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if port.is_empty() {
+        return false;
+    }
+    let after = &rest[port.len()..];
+    after.is_empty() || after.starts_with('/') || after.starts_with('?') || after.starts_with('#')
+}
+
 /// 应用信息（数据目录等，供设置页展示）
 #[tauri::command]
 fn app_info(state: State<'_, AppState>) -> serde_json::Value {
@@ -605,7 +654,13 @@ const HOTKEY_LOOKUP: &str = "Control+Alt+D";
 fn capture_selection(app: &tauri::AppHandle) -> Option<String> {
     use enigo::{Direction, Enigo, Key, Keyboard};
     let clip = app.clipboard();
-    let saved = clip.read_text().ok();
+    // 保存旧剪贴板：文本优先；非文本（如图片）暂存图像，取词后原样还原
+    let saved_text = clip.read_text().ok();
+    let saved_image = if saved_text.is_none() {
+        clip.read_image().ok()
+    } else {
+        None
+    };
 
     let mut enigo = Enigo::new(&enigo::Settings::default()).ok()?;
     // 热键触发时 Alt 仍被按住：不释放会变成 Ctrl+Alt+C（多数应用不响应）
@@ -622,9 +677,11 @@ fn capture_selection(app: &tauri::AppHandle) -> Option<String> {
         !t.is_empty() && t.chars().count() <= 2000
     });
 
-    // 还原用户剪贴板旧值
-    if let Some(old) = saved {
+    // 还原用户剪贴板旧值（文本或图像；读不到的格式无法保全，保持现状）
+    if let Some(old) = saved_text {
         let _ = clip.write_text(&old);
+    } else if let Some(img) = &saved_image {
+        let _ = clip.write_image(img);
     }
     picked
 }
@@ -636,11 +693,11 @@ fn show_lookup_at_cursor(lookup: &tauri::WebviewWindow, text: &str) -> tauri::Re
     #[cfg(windows)]
     {
         #[repr(C)]
-        struct POINT { x: i32, y: i32 }
+        struct Point { x: i32, y: i32 }
         extern "system" {
-            fn GetCursorPos(lp: *mut POINT) -> i32;
+            fn GetCursorPos(lp: *mut Point) -> i32;
         }
-        let mut pt = POINT { x: 0, y: 0 };
+        let mut pt = Point { x: 0, y: 0 };
         if unsafe { GetCursorPos(&mut pt) } != 0 {
             x = pt.x;
             y = pt.y;
@@ -651,18 +708,16 @@ fn show_lookup_at_cursor(lookup: &tauri::WebviewWindow, text: &str) -> tauri::Re
     use tauri::PhysicalPosition;
     let mut px = x + 12;
     let mut py = y + 12;
-    if let Ok(monitor) = lookup.current_monitor() {
-        if let Some(m) = monitor {
-            let size = m.size();
-            let scale = m.scale_factor();
-            let wpx = (w as f64 * scale) as i32;
-            let hpx = (h as f64 * scale) as i32;
-            if x + 12 + wpx > size.width as i32 {
-                px = (x - wpx - 12).max(0);
-            }
-            if y + 12 + hpx > size.height as i32 {
-                py = (y - hpx - 12).max(0);
-            }
+    if let Ok(Some(m)) = lookup.current_monitor() {
+        let size = m.size();
+        let scale = m.scale_factor();
+        let wpx = (w as f64 * scale) as i32;
+        let hpx = (h as f64 * scale) as i32;
+        if x + 12 + wpx > size.width as i32 {
+            px = (x - wpx - 12).max(0);
+        }
+        if y + 12 + hpx > size.height as i32 {
+            py = (y - hpx - 12).max(0);
         }
     }
     lookup.set_position(PhysicalPosition::new(px, py))?;
@@ -688,12 +743,18 @@ fn try_run() -> anyhow::Result<()> {
     let services = Arc::new(RestServices::new(db.clone()));
 
     tauri::Builder::default()
+        // 单实例：二次启动唤起已有主窗，避免双开抢热键/端口/共写数据
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app, shortcut, event| {
             if event.state() != ShortcutState::Pressed {
                 return;
             }
             let Some(main) = app.get_webview_window("main") else { return };
-            let Some(lookup) = app.get_webview_window("lookup") else { return };
             // Alt+T：呼出/隐藏主窗
             if shortcut.eq(&HOTKEY_MAIN.parse().expect("主窗热键")) {
                 if main.is_visible().unwrap_or(false) && main.is_focused().unwrap_or(false) {
@@ -705,18 +766,26 @@ fn try_run() -> anyhow::Result<()> {
                 return;
             }
             // Ctrl+Alt+D：划词翻译（取词失败也弹小窗提示，便于手动粘贴）
+            // 取词含模拟按键与等待，放独立线程避免阻塞热键回调
             if shortcut.eq(&HOTKEY_LOOKUP.parse().expect("划词热键")) {
-                let text = capture_selection(app).unwrap_or_default();
-                let _ = show_lookup_at_cursor(&lookup, &text);
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let text = capture_selection(&app).unwrap_or_default();
+                    if let Some(lookup) = app.get_webview_window("lookup") {
+                        let _ = show_lookup_at_cursor(&lookup, &text);
+                    }
+                });
             }
         }).build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
-            // 全局热键注册（占用时容忍失败并提示日志）
+            // 全局热键注册（占用时容忍失败，登记后由前端提示用户）
             let gs = app.global_shortcut();
+            let mut hotkey_failed = Vec::new();
             for (label, combo) in [("主窗", HOTKEY_MAIN), ("划词", HOTKEY_LOOKUP)] {
                 if let Err(e) = gs.register(combo) {
                     tracing::warn!(combo, error = %e, "全局热键注册失败（可能被占用）: {label}");
+                    hotkey_failed.push(format!("{label} {combo}"));
                 }
             }
             app.manage(AppState {
@@ -725,12 +794,15 @@ fn try_run() -> anyhow::Result<()> {
                 data_root,
                 rest: std::sync::Mutex::new(ServiceHandle::default()),
                 mcp: std::sync::Mutex::new(ServiceHandle::default()),
+                stream_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                hotkey_failed,
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             translate,
             translate_llm_stream,
+            translate_llm_stop,
             history_list,
             wordbook_list,
             wordbook_add,
@@ -748,6 +820,8 @@ fn try_run() -> anyhow::Result<()> {
             set_default_engine,
             engine_test,
             app_info,
+            hotkey_status,
+            open_external,
             api_key_set,
             service_status,
             service_toggle,
@@ -765,4 +839,24 @@ fn init_tracing() {
         .with(filter)
         .with(fmt::layer().with_writer(std::io::stderr).with_target(false));
     let _ = subscriber.try_init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loopback_http_url_gate() {
+        assert!(is_loopback_http_url("http://127.0.0.1:8321/api/v1/docs"));
+        assert!(is_loopback_http_url("http://localhost:51431"));
+        assert!(is_loopback_http_url("http://[::1]:8324/mcp?x=1"));
+        // 非回环 / 非 http / userinfo 混淆 / 伪端口一律拒绝
+        assert!(!is_loopback_http_url("https://127.0.0.1:8321/"));
+        assert!(!is_loopback_http_url("http://evil.com/"));
+        assert!(!is_loopback_http_url("http://127.0.0.1:8321@evil.com/"));
+        assert!(!is_loopback_http_url("http://localhost:abc/"));
+        assert!(!is_loopback_http_url("http://localhost:"));
+        assert!(!is_loopback_http_url("file:///C:/Windows"));
+        assert!(!is_loopback_http_url("javascript:alert(1)"));
+    }
 }

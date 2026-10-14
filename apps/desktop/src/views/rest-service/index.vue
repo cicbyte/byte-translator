@@ -36,7 +36,10 @@ async function copy(text: string) {
 }
 
 function openSwagger() {
-  window.open(`http://127.0.0.1:${port.value}/api/v1/docs`, "_blank");
+  // 走系统浏览器打开（后端校验仅放行本机地址）
+  invoke("open_external", { url: `http://127.0.0.1:${port.value}/api/v1/docs` }).catch((e) =>
+    message.error(String(e)),
+  );
 }
 
 load();
