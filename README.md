@@ -24,7 +24,7 @@ byte-translator 用一个本地工具统一解决：**查词（词典形态）+ 
 - 🌍 **完整多语言**——默认自动检测中英互译；`--from/--to` 显式指定任意语言对（LLM 引擎天然多语言）
 - 📚 **历史与生词本**——每次翻译自动留存本地 SQLite，可按关键词/引擎/语言检索；生词本幂等收藏加备注
 - ⚡ **四种形态同一核心**——`btr` 命令行（`--json` 供脚本）、REST API（SSE 流式 + Swagger）、MCP 服务（stdio / HTTP，Claude Desktop / Cursor 直连）；桌面端规划中
-- 🔐 **本地优先**——数据全在 `~/.cicbyte/apps/byte-translator/`（`CICBYTE_HOME` 可覆盖）；API Key 仅存本地不回显；REST/MCP 双独立 Key + 防 DNS Rebinding
+- 🔐 **本地优先**——数据全在 `~/.cicbyte/apps/byte-translator/`（`CICBYTE_HOME` 可覆盖）；API Key 仅存本地、加密落盘；REST/MCP 双独立 Key + 防 DNS Rebinding
 - 🗄️ **词典缓存**——词典结果本地缓存，LLM 结果不缓存
 
 ## 安装
@@ -72,7 +72,7 @@ btr -- history                    # 翻译保留字本身
 
 ```bash
 btr serve                         # 默认 http://127.0.0.1:8321
-# 首次自动生成 API Key（<data>/config/api.json）
+# 首次自动生成 API Key（启动时打印；加密存 <data>/config/api.json）
 
 curl -X POST http://127.0.0.1:8321/api/v1/translate \
   -H "X-API-Key: <KEY>" -H "Content-Type: application/json" \

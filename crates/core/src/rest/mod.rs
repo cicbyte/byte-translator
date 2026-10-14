@@ -287,8 +287,59 @@ pub enum KeyKind {
     Mcp,
 }
 
-/// 写 key 文件：tmp 名含 pid+原子序号——CLI 与桌面并发写时不互相同名截断；
-/// 先 fsync 再 rename，掉电不留半截文件
+/// 进程间互斥锁文件：create_new 抢占；持有方崩溃残留超过 5s 视为失效可抢。
+/// 保护 api.json 的「读-改-写」不被 CLI 与桌面并发交错。
+struct LockGuard {
+    path: std::path::PathBuf,
+}
+
+impl LockGuard {
+    fn acquire(dir: &Path) -> Result<Self> {
+        let path = dir.join(".api.json.lock");
+        std::fs::create_dir_all(dir).context("创建配置目录失败")?;
+        for _ in 0..50 {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(_) => return Ok(LockGuard { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.elapsed().ok())
+                        .map(|age| age > std::time::Duration::from_secs(5))
+                        .unwrap_or(false);
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => return Err(anyhow::Error::new(e).context("创建 API Key 锁文件失败")),
+            }
+        }
+        Err(anyhow!("等待 API Key 配置锁超时"))
+    }
+}
+
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// 读 key 文件并解密为明文（无 dpapi: 前缀的存量明文原样返回）；文件不存在返回 None
+fn read_key_file(file: &Path) -> Result<Option<ApiKeyFile>> {
+    if !file.exists() {
+        return Ok(None);
+    }
+    let txt = std::fs::read_to_string(file).context("读取 API Key 配置失败")?;
+    let mut f: ApiKeyFile = serde_json::from_str(&txt).context("解析 API Key 配置失败")?;
+    f.rest_key = crate::util::dpapi::unprotect(&f.rest_key);
+    f.mcp_key = crate::util::dpapi::unprotect(&f.mcp_key);
+    Ok(Some(f))
+}
+
+/// 写 key 文件（入参为明文，落盘前加密）：tmp 名含 pid+原子序号——
+/// 并发写时不互相同名截断；先 fsync 再 rename，掉电不留半截文件
 fn write_key_file(dir: &Path, file: &Path, f: &ApiKeyFile) -> Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -298,7 +349,10 @@ fn write_key_file(dir: &Path, file: &Path, f: &ApiKeyFile) -> Result<()> {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    let payload = serde_json::to_string_pretty(f)?;
+    let payload = serde_json::to_string_pretty(&ApiKeyFile {
+        rest_key: crate::util::dpapi::protect(&f.rest_key)?,
+        mcp_key: crate::util::dpapi::protect(&f.mcp_key)?,
+    })?;
     {
         use std::io::Write as _;
         let mut fh = std::fs::File::create(&tmp).context("写入 API Key 失败")?;
@@ -314,30 +368,13 @@ fn write_key_file(dir: &Path, file: &Path, f: &ApiKeyFile) -> Result<()> {
     Ok(())
 }
 
-/// 读取或生成 API Keys（<data>/config/api.json）。
+/// 读取或生成 API Keys（<data>/config/api.json，返回明文）。
 /// 首次生成返回 Some(ApiKeyFile)（调用方提示用户保存），已存在返回 None。
 pub fn load_or_create_api_keys(data_root: &Path) -> Result<(ApiKeys, Option<ApiKeyFile>)> {
     let dir = data_root.join("config");
     let file = dir.join("api.json");
-    if file.exists() {
-        // 并发写方刚 rename 的瞬间可能 NotFound/半空——小睡重试一次
-        let read = || -> Result<String> {
-            for attempt in 0..3 {
-                match std::fs::read_to_string(&file) {
-                    Ok(t) if !t.trim().is_empty() => return Ok(t),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound && attempt < 2 => {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                    }
-                    Err(e) => return Err(anyhow::Error::new(e)),
-                    Ok(_) => {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                    }
-                }
-            }
-            std::fs::read_to_string(&file).context("读取 API Key 配置失败")
-        };
-        let txt = read()?;
-        let mut f: ApiKeyFile = serde_json::from_str(&txt).context("解析 API Key 配置失败")?;
+    let _lock = LockGuard::acquire(&dir)?;
+    if let Some(mut f) = read_key_file(&file)? {
         let mut created = None;
         if f.mcp_key.is_empty() {
             f.mcp_key = new_key();
@@ -374,15 +411,11 @@ fn new_key() -> String {
 pub fn rotate_api_key(data_root: &Path, kind: KeyKind) -> Result<String> {
     let dir = data_root.join("config");
     let file = dir.join("api.json");
-    let mut f: ApiKeyFile = if file.exists() {
-        let txt = std::fs::read_to_string(&file).context("读取 API Key 配置失败")?;
-        serde_json::from_str(&txt).context("解析 API Key 配置失败")?
-    } else {
-        ApiKeyFile {
-            rest_key: String::new(),
-            mcp_key: String::new(),
-        }
-    };
+    let _lock = LockGuard::acquire(&dir)?;
+    let mut f = read_key_file(&file)?.unwrap_or_else(|| ApiKeyFile {
+        rest_key: String::new(),
+        mcp_key: String::new(),
+    });
     let new = new_key();
     match kind {
         KeyKind::Rest => f.rest_key = new.clone(),
@@ -400,15 +433,11 @@ pub fn set_api_key(data_root: &Path, kind: KeyKind, key: &str) -> Result<()> {
     }
     let dir = data_root.join("config");
     let file = dir.join("api.json");
-    let mut f: ApiKeyFile = if file.exists() {
-        let txt = std::fs::read_to_string(&file).context("读取 API Key 配置失败")?;
-        serde_json::from_str(&txt).context("解析 API Key 配置失败")?
-    } else {
-        ApiKeyFile {
-            rest_key: String::new(),
-            mcp_key: String::new(),
-        }
-    };
+    let _lock = LockGuard::acquire(&dir)?;
+    let mut f = read_key_file(&file)?.unwrap_or_else(|| ApiKeyFile {
+        rest_key: String::new(),
+        mcp_key: String::new(),
+    });
     match kind {
         KeyKind::Rest => f.rest_key = key.to_string(),
         KeyKind::Mcp => f.mcp_key = key.to_string(),
@@ -490,6 +519,51 @@ mod tests {
         set_api_key(tmp.path(), KeyKind::Mcp, "custom-key-32-chars-aaaaaaaaaaa").unwrap();
         let (k4, _) = load_or_create_api_keys(tmp.path()).unwrap();
         assert_eq!(k4.mcp, "custom-key-32-chars-aaaaaaaaaaa");
+    }
+
+    #[test]
+    fn key_file_encrypts_at_rest_and_upgrades_legacy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (k1, _) = load_or_create_api_keys(tmp.path()).unwrap();
+        let file = tmp.path().join("config").join("api.json");
+        let txt = std::fs::read_to_string(&file).unwrap();
+        #[cfg(target_os = "windows")]
+        {
+            assert!(txt.contains("dpapi:"), "落盘应为密文");
+            assert!(!txt.contains(&k1.rest), "明文 Key 不得出现在文件中");
+            assert!(!txt.contains(&k1.mcp), "明文 Key 不得出现在文件中");
+        }
+        // 存量明文文件兼容读取，返回原 Key
+        std::fs::write(
+            &file,
+            r#"{"rest_key":"legacy-rest-key","mcp_key":"legacy-mcp-key"}"#,
+        )
+        .unwrap();
+        let (k2, created) = load_or_create_api_keys(tmp.path()).unwrap();
+        assert_eq!(k2.rest, "legacy-rest-key");
+        assert_eq!(k2.mcp, "legacy-mcp-key");
+        assert!(created.is_none(), "存量两把 Key 齐全不应新建");
+        // 下次写入自动升级为密文
+        rotate_api_key(tmp.path(), KeyKind::Rest).unwrap();
+        let txt = std::fs::read_to_string(&file).unwrap();
+        #[cfg(target_os = "windows")]
+        assert!(txt.contains("dpapi:"), "写入后应升级为密文");
+    }
+
+    #[test]
+    fn concurrent_first_generation_agrees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let root = tmp.path().to_path_buf();
+                std::thread::spawn(move || load_or_create_api_keys(&root).unwrap().0)
+            })
+            .collect();
+        let keys: Vec<ApiKeys> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        for k in &keys {
+            assert_eq!(k.rest, keys[0].rest, "并发首启应得到同一把 REST Key");
+            assert_eq!(k.mcp, keys[0].mcp, "并发首启应得到同一把 MCP Key");
+        }
     }
 
     // ===== 端点集成（oneshot，不监听端口）=====

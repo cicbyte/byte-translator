@@ -30,6 +30,11 @@ hex = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 
+# === 静态加密（API Key 落盘 DPAPI；仅 Windows 需要系统 API）===
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Memory"] }
+base64 = "0.22"
+
 # === REST API 服务（btr serve；feature 关闭零增量）===
 axum = { version = "0.8", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }

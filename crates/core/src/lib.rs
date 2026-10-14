@@ -12,6 +12,7 @@ pub mod db;
 pub mod lang;
 pub mod service;
 pub mod translator;
+pub mod util;
 
 #[cfg(feature = "server")]
 pub mod rest;
