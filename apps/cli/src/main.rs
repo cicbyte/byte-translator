@@ -47,13 +47,13 @@ use byte_translator_core::translator::TranslateRequest;
   btr mcp --transport http      MCP HTTP（默认 :8324/mcp）
 
 多机（单一数据源）
-  主力机      btr serve --host 0.0.0.0（自动生成 API Key，见 <data>/config/api.json）
+  主力机      btr serve --host 0.0.0.0（自动生成 API Key，启动时打印）
   其它机器    btr --remote http://主力机IP:8321 --api-key <KEY> hello
   （BTR_REMOTE / BTR_API_KEY 环境变量亦可；供应商管理在主力机本地执行）
 
 提示
   --json        结构化输出（AI/脚本消费的稳定契约）
-  -e/--engine   iciba 或 llm；缺省自动调度（词典优先、失败降级 LLM）
+  -e/--engine   指定引擎（缺省自动调度；可选值见 btr engine）
   --app-root    覆盖数据目录（默认 ~/.cicbyte/byte-translator）
 "
 )]
@@ -76,7 +76,7 @@ struct Cli {
     /// 目标语言（缺省自动检测：中英互译）
     #[arg(long = "to")]
     to: Option<String>,
-    /// 指定引擎（iciba / llm；缺省自动调度）
+    /// 指定引擎（缺省自动调度；可选值见 btr engine）
     #[arg(short = 'e', long)]
     engine: Option<String>,
     /// 要翻译的文本（省略则读 stdin）
@@ -102,7 +102,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ProviderCmd,
     },
-    /// 引擎列表
+    /// 翻译引擎列表（注册表全量）
     Engine,
     /// 启动 REST API 服务（默认 127.0.0.1:8321；非回环绑定强制 API Key）
     Serve {
@@ -272,20 +272,25 @@ async fn async_run(cli: &Cli, be: &Backend) -> Result<()> {
         Some(Cmd::Wordbook { cmd }) => wordbook_cmd(cli, be, cmd).await,
         Some(Cmd::Provider { cmd }) => provider_cmd(cli, be, cmd).await,
         Some(Cmd::Engine) => {
-            let engines = serde_json::json!([
-                { "engine": "iciba", "kind": "词典", "langs": "zh<->en",
-                  "desc": "音标/词性/释义/例句；单词自动优先，未命中自动降级" },
-                { "engine": "llm", "kind": "文本", "langs": "任意",
-                  "desc": "多供应商 LLM；句子与非中英语言对自动路由" },
-            ]);
-            emit_list(
-                cli,
-                vec![
-                    "iciba\t词典\tzh<->en\t音标/词性/释义/例句；单词自动优先".to_string(),
-                    "llm\t文本\t任意\t多供应商 LLM；句子与非中英自动路由".to_string(),
-                ],
-                engines,
+            use byte_translator_core::translator::registry;
+            let rows: Vec<String> = registry::descriptors()
+                .iter()
+                .map(|d| format!("{}\t{}\t{}\t{}", d.name, d.group.label(), d.label, d.capability))
+                .collect();
+            let engines = serde_json::Value::Array(
+                registry::descriptors()
+                    .iter()
+                    .map(|d| {
+                        serde_json::json!({
+                            "engine": d.name,
+                            "label": d.label,
+                            "group": d.group.label(),
+                            "capability": d.capability,
+                        })
+                    })
+                    .collect(),
             );
+            emit_list(cli, rows, engines);
             Ok(())
         }
         _ => unreachable!("serve/mcp 已在前置分支处理"),
@@ -518,10 +523,10 @@ fn serve_cmd(
     println!("  数据目录  {}", root.display());
     match newly_created {
         Some(k) => {
-            println!("  API Key   {k}  （首次自动生成，已存 config/api.json，请妥善保存）");
+            println!("  API Key   {k}  （首次自动生成，已加密存 config/api.json，请妥善保存）");
         }
         None => {
-            println!("  API Key   见 {} 的 config/api.json（或 --api-key 覆盖）", root.display());
+            println!("  API Key   {}  （config/api.json 加密落盘；--api-key 可覆盖）", cfg.api_key);
         }
     }
     println!("  文档      http://{bind}/api/v1/docs");
@@ -591,10 +596,11 @@ fn mcp_cmd(
             return Err(anyhow!("MCP http 模式必须配置 API Key（--api-key 或 config/api.json）"));
         }
         if let Some(k) = newly {
-            eprintln!("MCP API Key 首次生成：{k}（已存 config/api.json，与 REST 各自独立）");
+            eprintln!("MCP API Key 首次生成：{k}（已加密存 config/api.json，与 REST 各自独立）");
         }
         println!("btr MCP HTTP 服务");
         println!("  端点      http://{host}:{port}/mcp");
+        println!("  API Key   {key}");
         println!("  Ctrl+C 停止");
         let shutdown = async {
             let _ = tokio::signal::ctrl_c().await;
