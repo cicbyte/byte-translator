@@ -32,7 +32,11 @@
             </a-select-option>
           </a-select>
         </div>
-        <a-button type="primary" size="small" :loading="loading" @click="translate">
+        <a-button v-if="streaming" danger size="small" @click="stopStream">
+          <template #icon><StopOutlined /></template>
+          停止
+        </a-button>
+        <a-button v-else type="primary" size="small" :loading="loading" @click="translate">
           <template #icon><SendOutlined /></template>
           翻译
         </a-button>
@@ -82,7 +86,7 @@
           <p class="plain">{{ streamText || result?.translation }}</p>
         </template>
         <div v-if="result" class="result-actions">
-          <button class="chip-btn" :disabled="collected" @click="collect">
+          <button class="chip-btn" :disabled="collected || collecting" @click="collect">
             <StarOutlined />
             {{ collected ? "已收藏" : "收藏生词" }}
           </button>
@@ -106,7 +110,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { message } from "ant-design-vue";
-import { SendOutlined, StarOutlined, CopyOutlined } from "@ant-design/icons-vue";
+import { SendOutlined, StopOutlined, StarOutlined, CopyOutlined } from "@ant-design/icons-vue";
 import { Channel, invoke } from "@tauri-apps/api/core";
 
 interface TranslationResult {
@@ -166,7 +170,11 @@ onMounted(() => {
   if (typeof t === "string" && t.trim()) text.value = t;
   window.addEventListener("keydown", onGlobalKey);
 });
-onUnmounted(() => window.removeEventListener("keydown", onGlobalKey));
+onUnmounted(() => {
+  window.removeEventListener("keydown", onGlobalKey);
+  // 离开页面即终止流式，避免 LLM 白跑
+  if (streaming.value) stopStream();
+});
 
 function onGlobalKey(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === "Enter") translate();
@@ -209,6 +217,10 @@ async function translate() {
   }
 }
 
+function stopStream() {
+  invoke("translate_llm_stop").catch(() => {});
+}
+
 function translateStreaming(t: string): Promise<void> {
   return new Promise((resolve, reject) => {
     streaming.value = true;
@@ -220,6 +232,11 @@ function translateStreaming(t: string): Promise<void> {
         result.value = ev.result;
         resolve();
       } else if (ev.type === "error") {
+        // 主动停止不是错误：保留已流出的部分文本即可
+        if ((ev.message || "").includes("已取消")) {
+          resolve();
+          return;
+        }
         error.value = ev.message || "流式翻译失败";
         reject(new Error(ev.message));
       }
@@ -230,17 +247,27 @@ function translateStreaming(t: string): Promise<void> {
       to: toLang.value || null,
       onEvent: channel,
     }).catch((e) => {
-      error.value = error.value || String(e);
+      if (!String(e).includes("已取消")) {
+        error.value = error.value || String(e);
+      }
       reject(e);
     });
   });
 }
 
+const collecting = ref(false);
 async function collect() {
-  if (!result.value) return;
-  await invoke("wordbook_add", { text: result.value.text, note: result.value.translation });
-  collected.value = true;
-  message.success("已收藏到生词本");
+  if (!result.value || collecting.value) return;
+  collecting.value = true;
+  try {
+    await invoke("wordbook_add", { text: result.value.text, note: result.value.translation });
+    collected.value = true;
+    message.success("已收藏到生词本");
+  } catch (e) {
+    message.error(`收藏失败：${String(e)}`);
+  } finally {
+    collecting.value = false;
+  }
 }
 
 async function copyResult() {

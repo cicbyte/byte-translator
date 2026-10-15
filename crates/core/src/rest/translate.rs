@@ -102,10 +102,15 @@ async fn sse_translate(
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let svc = state.svc.clone();
+    // 取消位：发送失败（SSE 随连接断开销毁）即置位，终止后续生成
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let send_failed = cancelled.clone();
     tokio::spawn(async move {
         let outcome = translate_stream(&provider, &req, |delta| {
-            let _ = tx.send(serde_json::json!({ "delta": delta }).to_string());
-        }, || false)
+            if tx.send(serde_json::json!({ "delta": delta }).to_string()).is_err() {
+                send_failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }, || cancelled.load(std::sync::atomic::Ordering::SeqCst))
         .await;
         let final_frame = match outcome {
             Ok(result) => {
@@ -119,6 +124,7 @@ async fn sse_translate(
                 }})
                 .to_string()
             }
+            // 取消：无完整结果可留存，错误帧尽力送达（收端已销毁则静默）
             Err(e) => serde_json::json!({ "error": format!("{e:#}") }).to_string(),
         };
         let _ = tx.send(final_frame);
