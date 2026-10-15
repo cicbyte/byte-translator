@@ -1,0 +1,161 @@
+name: Release
+
+# 发布流水线：tag 推送（v*，通常由 Tag Release 一键发版触发）或手动指定已存在 tag。
+# 矩阵构建只产出 artifacts；汇聚 job 集中生成 changelog（cliff 经文件传 body）
+# 与 sha256 后统一挂 Release。产物命名 byte-translator-<target>.<ext>（CLI）
+# 与 byte-translator_*（桌面安装器，来自 tauri.conf.json 的 productName）。
+# 常规发版走 Tag Release 工作流（它会先 bump 版本再打 tag）；
+# 直推 tag 也能触发本流，但二进制版本取决于 tag 指向提交的版本文件。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布标签（如 v0.1.0，需已推送）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, archive: tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
+          - { os: macos-latest, target: aarch64-apple-darwin, archive: tar.gz }
+          - { os: macos-latest, target: x86_64-apple-darwin, archive: tar.gz }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p byte-translator-cli
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          T=${{ matrix.target }}
+          EXT=""
+          [[ "$T" == *windows* ]] && EXT=".exe"
+          STAGE="byte-translator-$T"
+          mkdir -p "$STAGE"
+          cp "target/$T/release/btr$EXT" "$STAGE/"
+          cp README.md "$STAGE/"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            # 7z 而非 Compress-Archive：后者产生反斜杠分隔符的 zip，跨平台解压会坏
+            7z a "$STAGE.zip" "$STAGE"
+          else
+            tar czf "$STAGE.tar.gz" "$STAGE"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          # 必须按 target 区分：v4 同名 artifact 会互相覆盖
+          name: dist-${{ matrix.target }}
+          path: byte-translator-${{ matrix.target }}.*
+
+  # 桌面端安装器（首批仅 Windows）：Tauri v2 打 msi + nsis 安装包。
+  # tauri CLI 用全局 npm 装 v2 预编译版（比 cargo install tauri-cli 快一个量级）；
+  # 版本号来自 tauri.conf.json（Tag Release 发版时与 Cargo.toml 同步 bump）。
+  desktop-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-windows
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - name: Install tauri CLI
+        run: npm install -g @tauri-apps/cli@2
+      - name: Install frontend deps
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+      # 前端在 CI 里显式构建（vue-tsc 类型检查 + vite），再以 --config 空命令
+      # 跳过 tauri.conf.json 的 beforeBuildCommand hook，构建时机完全由 CI 掌控。
+      - name: Build frontend
+        working-directory: apps/desktop
+        run: pnpm build
+      - name: Build desktop app
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          echo '{"build":{"beforeBuildCommand":"echo frontend prebuilt in CI"}}' > tauri.ci.conf.json
+          tauri build --config tauri.ci.conf.json
+      # Cargo workspace 布局：tauri 打包产物在 workspace 根 target/，
+      # 不在 apps/desktop/src-tauri/target/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-desktop-windows
+          if-no-files-found: error
+          path: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+
+  release:
+    needs: [build, desktop-windows]
+    runs-on: ubuntu-latest
+    steps:
+      # cliff 生成发版说明需要全历史与 tag
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: cliff
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          # 多行 body 经文件传给 release 最稳（避免引号/换行转义问题）
+          OUTPUT: CHANGELOG.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          # desktop artifact 内 msi/exe 位于 msi/、nsis/ 子目录（upload-artifact
+          # 以多路径最小公共祖先 bundle/ 为根保存），先摊平到根目录
+          mv -v msi/*.msi nsis/*.exe . 2>/dev/null || true
+          ls -la byte-translator-* || true
+          for f in byte-translator-*.tar.gz byte-translator-*.zip byte-translator_*.msi byte-translator_*-setup.exe; do
+            [ -e "$f" ] || continue
+            sha256sum "$f" > "$f.sha256"
+          done
+          cat byte-translator-*.sha256 byte-translator_*.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          body_path: CHANGELOG.md
+          files: |
+            byte-translator-*.tar.gz
+            byte-translator-*.zip
+            byte-translator-*.sha256
+            byte-translator_*.msi
+            byte-translator_*-setup.exe
+            byte-translator_*.sha256
