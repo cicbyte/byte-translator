@@ -39,5 +39,11 @@ flows:
       - run: ["engine", "--json"]
         exit: 0
         expect_json:
+          - engine: google
+          - engine: mymemory
+          - engine: deepl
+          - engine: baidu
+          - engine: youdao
+          - engine: tencent
           - engine: iciba
           - engine: llm

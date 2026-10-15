@@ -1,0 +1,28 @@
+# 引擎注册表清单（多引擎覆盖，无网络依赖）
+flows:
+  - name: engine 列表覆盖全注册表
+    steps:
+      - run: ["engine"]
+        exit: 0
+        contains:
+          - "google"
+          - "mymemory"
+          - "deepl"
+          - "baidu"
+          - "youdao"
+          - "tencent"
+          - "iciba"
+          - "llm"
+          - "免 Key 即用"
+          - "需配置"
+          - "词典"
+
+  - name: engine --json 结构化契约
+    steps:
+      - run: ["engine", "--json"]
+        exit: 0
+        contains:
+          - "\"engine\": \"google\""
+          - "\"engine\": \"tencent\""
+          - "\"group\": \"免 Key 即用\""
+          - "\"capability\":"

@@ -1,7 +1,7 @@
 """
 btr CLI 端到端测试公共设施。
 
-- btr 二进制定位：target/debug/btr.exe（缺失时自动 cargo build -p byte-translator-cli）
+- btr 二进制定位：target/debug/btr.exe（每次会话增量构建，保证测到最新代码）
 - app_root 隔离：每个 flow 使用独立临时数据目录，不触碰用户真实数据
 - 运行辅助：run_btr(...) 统一 subprocess 调用（UTF-8、超时、stdin）
 """
@@ -18,9 +18,7 @@ BTR_PATH = REPO_ROOT / "target" / "debug" / ("btr.exe" if os.name == "nt" else "
 
 
 def _ensure_btr_binary() -> Path:
-    """btr 二进制存在性检查；缺失时自动构建。"""
-    if BTR_PATH.exists():
-        return BTR_PATH
+    """构建 btr 二进制。每次测试会话都跑增量构建——跳过构建会拿旧二进制测旧代码。"""
     subprocess.run(
         ["cargo", "build", "-p", "byte-translator-cli"],
         cwd=REPO_ROOT,

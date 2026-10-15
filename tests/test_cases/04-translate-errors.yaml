@@ -17,9 +17,15 @@ flows:
 
   - name: 未知引擎报错
     steps:
-      - run: ["-e", "baidu", "hello"]
+      - run: ["-e", "not-exist", "hello"]
         exit: 1
         contains: ["不支持的引擎"]
+
+  - name: 注册表引擎未配置凭据时报错
+    steps:
+      - run: ["-e", "baidu", "hello"]
+        exit: 1
+        contains: ["未配置"]
 
   - name: 非中英语言对（无供应商时 LLM 失败路径）
     steps:

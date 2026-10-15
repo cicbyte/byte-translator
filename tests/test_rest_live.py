@@ -39,35 +39,33 @@ def _request(port: int, path: str, method="GET", key=None, body=None, host="127.
 
 @pytest.fixture
 def serve(btr_bin, tmp_path):
-    """起 btr serve（随机端口），yield (port, key)，测试完关停。"""
+    """起 btr serve（随机端口 + 显式 Key），yield (port, key)，测试完关停。"""
     app_root = tmp_path / "rest-root"
     port = _free_port()
+    # 显式 --api-key：api.json 落盘为加密态，测试不经文件取 Key
+    key = "e2e-rest-key-32-chars-aaaaaaaaaa"
     proc = subprocess.Popen(
-        [str(BTR_PATH), "--app-root", str(app_root), "serve", "--port", str(port)],
+        [str(BTR_PATH), "--app-root", str(app_root), "serve", "--port", str(port), "--api-key", key],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=str(REPO_ROOT),
     )
     try:
-        # 等 key 文件落盘（服务就绪信号）
-        key_file = app_root / "data" / "config" / "api.json"
+        # 等 /health 可用；serve 提前退出或超时都显式失败
         for _ in range(60):
-            if key_file.exists():
-                break
-            time.sleep(0.5)
-        else:
-            proc.kill()
-            raise RuntimeError("serve 启动超时")
-        key = json.loads(key_file.read_text(encoding="utf-8"))["rest_key"]
-        # 等 /health 可用
-        for _ in range(30):
             try:
                 status, _ = _request(port, "/health")
                 if status == 200:
                     break
             except Exception:
                 pass
+            if proc.poll() is not None:
+                proc.kill()
+                raise RuntimeError(f"serve 启动即退出（端口 {port} 可能被占用）")
             time.sleep(0.5)
+        else:
+            proc.kill()
+            raise RuntimeError("serve /health 就绪超时")
         yield port, key
     finally:
         proc.terminate()
